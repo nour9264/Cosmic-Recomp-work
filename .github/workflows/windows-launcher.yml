@@ -1,0 +1,91 @@
+name: Windows launcher and diagnostic bridge
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: ExtremestoneGG/recomp-ui
+          ref: 047bc82d8679e96d1dec19ce2cd8ab677003465f
+          path: third_party/full-emerald-ui
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: rexglue/rexglue-sdk
+          ref: c94f5ebdcb3c9d1a460ca48e04f9758448f8d518
+          path: third_party/rexglue-sdk
+          persist-credentials: false
+      - name: Obtain pinned standalone SDL source
+        run: |
+          git -C third_party/rexglue-sdk submodule update --init thirdparty/sdl3
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned SDL checkout failed.' }
+      - name: Compile standalone launcher
+        run: |
+          cmake -S launcher/native -B build/frontend -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher configure failed.' }
+          cmake --build build/frontend --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher compile failed.' }
+      - name: Build current diagnostic bridge
+        run: |
+          New-Item -ItemType Directory -Force data/temp | Out-Null
+          python -B tools/build_release_bridge.py --hero-time --gpu-diagnostics
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic bridge failed.' }
+      - name: Run asset-free regression checks
+        run: |
+          foreach ($test in @('test_hero_time_rules.py', 'test_gpu_diagnostic_profiles.py', 'test_save_reset.py', 'test_development_staging.py')) {
+            python -B "tools/$test"
+            if ($LASTEXITCODE -ne 0) { throw "Failed: $test" }
+          }
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          & $csc /nologo /target:exe /platform:x64 /out:build/IsoReaderTests.exe launcher/IsoImage.cs tests/IsoReaderTests.cs
+          if ($LASTEXITCODE -ne 0) { throw 'ISO fixture compilation failed.' }
+          & ./build/IsoReaderTests.exe build/parser-fixtures
+          if ($LASTEXITCODE -ne 0) { throw 'ISO fixture tests failed.' }
+      - name: Stage launcher components only
+        run: |
+          $out = 'build/launcher-components'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/frontend/Release/CosmicRecomp.exe $out
+          Copy-Item build/gpu-diagnostic-release/CosmicBridge.exe $out
+          Copy-Item LICENSE $out
+          Copy-Item LICENSES "$out/licenses" -Recurse
+          @'
+          Launcher components only. NOT A PLAYABLE GAME PACKAGE.
+          No ben10.exe, rexruntime.dll, rexgpu-xenos.dll or native menu marker is supplied.
+          ISO import/play requires a complete, coherently built matching runtime.
+          Do not copy unrelated release DLLs into this artifact.
+          No gameplay, RTX performance fix, or full native rebuild is verified.
+          '@ | Set-Content "$out/README.txt" -Encoding utf8
+          @{ commit = $env:GITHUB_SHA; profile = 'hero-time-gpu-diagnostics'; playable = $false; full_native_build = $false } |
+            ConvertTo-Json | Set-Content "$out/BUILD.json" -Encoding utf8
+          Get-ChildItem $out -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content "$out/SHA256SUMS.txt" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-components-NOT-PLAYABLE-${{ github.sha }}
+          path: build/launcher-components/
+          if-no-files-found: error
+          retention-days: 7
