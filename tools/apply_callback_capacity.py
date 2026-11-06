@@ -1,6 +1,7 @@
 """Expand both callback tables after local codegen; contains no game bodies."""
 import re
 from pathlib import Path
+from generated_functions import locate_functions
 CAPACITY=64
 RECORD_BASE=756
 CONSUMED_BASE=RECORD_BASE+24*CAPACITY
@@ -70,9 +71,15 @@ def apply(generated):
                  ('8215E778',{**first,**pending,40:(FIRST_PENDING+4)//8})],
         })
 
+    # File partition numbers can differ between fresh codegen runs. Preserve
+    # every reviewed transformation, but resolve its unique function first.
+    paths=locate_functions(generated, ['sub_'+function for entries in grouped.values() for function,_ in entries])
+    by_path={}
+    for entries in grouped.values():
+        for entry in entries:
+            by_path.setdefault(paths['sub_'+entry[0]],[]).append(entry)
     changed=0
-    for unit,entries in grouped.items():
-        path=Path(generated)/f'ben10_recomp.{unit}.cpp'
+    for path,entries in by_path.items():
         text=path.read_text()
         for function,mapping in entries:
             marker='// Cosmic callback capacity 64: '+function

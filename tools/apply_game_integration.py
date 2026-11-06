@@ -5,6 +5,7 @@ Run after rexglue codegen and before compiling the consumer.
 """
 import argparse
 from pathlib import Path
+from generated_functions import locate_functions
 
 parser=argparse.ArgumentParser();parser.add_argument('--generated',type=Path,required=True);args=parser.parse_args()
 changes=0
@@ -50,7 +51,7 @@ from apply_callback_capacity import apply as expand_callbacks
 from apply_resource_diagnostics import apply as add_diagnostics
 changes+=expand_callbacks(args.generated)
 changes+=add_diagnostics(args.generated)
-p=args.generated/'ben10_recomp.72.cpp';text=p.read_text()
+p=locate_functions(args.generated,['sub_824868B8'])['sub_824868B8'];text=p.read_text()
 start=text.index('DEFINE_REX_FUNC(sub_824868B8) {')
 end=text.find('\nDEFINE_REX_FUNC(',start+1)
 if end<0:end=len(text)

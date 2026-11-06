@@ -143,6 +143,13 @@ generated code. Review its output before compiling. Never replace a missing
 integration recipe with guessed edits to arbitrary generated functions.
 Generated game sources remain ignored and local.
 
+The callback, diagnostic and polling recipes locate reviewed function symbols
+uniquely rather than relying on generated C++ unit numbers, which differed in
+a fresh local generation with the pinned SDK. Missing or duplicated symbols
+are rejected. Synthetic repartition/duplicate tests and a second integration
+pass preserving every generated C++ hash were checked locally. This verifies
+recipe location/idempotence, not gameplay.
+
 ## 6. Compile the consumer against that installed SDK
 
 ```powershell
