@@ -3,6 +3,11 @@
 <a id="english"></a>
 # Cosmic Recomp
 
+**Community work — Performance Improvement / Alpha 5 candidate:** see the
+[local performance investigation and reproduction steps](docs/PERFORMANCE_ALPHA5.md).
+The candidate is an opt-in diagnostic profile; no community Alpha 5 installer
+has been published yet. The upstream Alpha baseline below is preserved.
+
 Experimental Windows 10/11 x64 native port of **Ben 10 Ultimate Alien: Cosmic Destruction** (Xbox 360), using ReXGlue v0.10.0 and Direct3D 12.
 
 **Alpha software. Camera/scenery flicker above 30 FPS is still present and is the next priority.**

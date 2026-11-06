@@ -13,7 +13,8 @@ in another installation or run two game instances against the same data root.
 The `measure-phases` bridge already sets `BEN10_CPU_DRAW_PHASES`, which activates
 the new collector and places `shared-memory-*.jsonl` beside the existing logs.
 `BEN10_SHARED_MEMORY_AUDIT` can explicitly select a path for synthetic checks.
-With both variables absent, the collector does not take timestamps or write.
+With both variables absent, the collector takes no per-request timestamps and
+writes no output.
 
 At 720p/windowed, record the same stationary slow scene for 30 seconds at cap 30,
 then 30 seconds at Unlimited. Exit normally and preserve all logs before restart.
