@@ -3,7 +3,7 @@
     "origin": "https://github.com/rexglue/rexglue-sdk.git",
     "commit": "c94f5ebdcb3c9d1a460ca48e04f9758448f8d518",
     "local_patch": "sdk-patches/rex-sdk-local.diff",
-    "patch_sha256": "c8b893593288626389bed9e8593bd8e4bdfb3665f282e4373dd572d1e589752b",
+    "patch_sha256": "7142e8aa7ad8453a4767d766f880802ab99a05c78e1de547b98e1751ed50dd09",
     "diagnostic_include_paths": "Relocatable @COSMIC_CONSUMER@/ placeholder",
     "presentation_extension": "SDK SDL window unit: live output size and exclusive display mode; no GPU algorithm change"
   },
