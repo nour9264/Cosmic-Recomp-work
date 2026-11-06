@@ -40,3 +40,23 @@ Synthetic checks cover disabled collection, count/failure accounting, sequential
 phase sums, JSON flushing/reset and automatic activation through the existing
 CPU-phase variable. The GPU target rebuilt from two translation units and linked.
 Gameplay collection remains pending user testing. No performance gain is claimed.
+
+## Full-upload comparison candidate
+
+The follow-up capture attributed roughly 49–54 ms/frame to
+`UploadAudit::Observe`, about 97.7% of RequestRanges wall time in the final
+12 slow windows. Memcpy and page-scan lock acquisition were much smaller.
+This locates the expensive function, not the exact internal cache operation.
+
+The diagnostic bridge accepts `measure-no-reuse` in the selected data root's
+`graphics-diagnostic-profile.txt`. It removes both `BEN10_REUSE_UPLOADS` and
+`BEN10_UPLOAD_AUDIT` from the child environment, using the existing full-copy
+path without the shadow observer. Setting either variable to `0` would not
+disable a presence-based getenv check. GPU, CPU-phase, shared-memory, cadence
+and vblank collectors remain active. The normal shipping bridge and the
+default diagnostic profile retain their existing behavior.
+
+Only the bridge needs rebuilding for this comparison. To restore the measured
+reference behavior, select `measure-phases`. Do not compare different scenes,
+caps or resolutions. Profile isolation and telemetry-retention checks passed;
+FPS gain and graphical correctness await the user's matched gameplay test.

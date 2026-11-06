@@ -15,12 +15,20 @@ namespace CosmicRecompi {
             string profile=File.Exists(profilePath)?File.ReadAllText(profilePath).Trim():"measure-phases";
             switch(profile) {
                 case "standard": case "measure-standard": case "measure-phases": break;
+                case "measure-no-reuse":
+                    // getenv checks presence, so "0" would still enable reuse.
+                    // Disable its optional shadow observer too: it runs the same
+                    // expensive comparison even without selective copies.
+                    start.EnvironmentVariables.Remove("BEN10_REUSE_UPLOADS");
+                    start.EnvironmentVariables.Remove("BEN10_UPLOAD_AUDIT");
+                    File.AppendAllText(diagnostics,"Full-upload comparison: reuse and shadow observer disabled; original full-copy path retained."+Environment.NewLine);
+                    break;
                 case "gpu-bounds": case "measure-gpu-bounds": start.EnvironmentVariables["BEN10_EDRAM_BOUNDS"]="false"; break;
                 case "viewport": start.EnvironmentVariables["BEN10_INTEL_VIEWPORT"]="false"; break;
                 case "stencil": start.EnvironmentVariables["BEN10_INTEL_STENCIL"]="false"; break;
-                default: throw new IOException("Unknown graphics diagnostic profile. Use standard, gpu-bounds, viewport, stencil, measure-standard, measure-gpu-bounds or measure-phases.");
+                default: throw new IOException("Unknown graphics diagnostic profile. Use standard, gpu-bounds, viewport, stencil, measure-standard, measure-gpu-bounds, measure-phases or measure-no-reuse.");
             }
-            if(profile=="measure-standard" || profile=="measure-gpu-bounds" || profile=="measure-phases") {
+            if(profile=="measure-standard" || profile=="measure-gpu-bounds" || profile=="measure-phases" || profile=="measure-no-reuse") {
                 string logs=Path.GetDirectoryName(diagnostics);
                 Directory.CreateDirectory(logs);
                 string timing=Path.Combine(logs,"gpu-timing-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")+".jsonl");
@@ -31,7 +39,7 @@ namespace CosmicRecompi {
                 start.EnvironmentVariables["BEN10_VBLANK_AUDIT"]=vblank;
                 File.AppendAllText(diagnostics,"Cadence output: "+cadence+"; guest vblank output: "+vblank+"; passive timing, no scheduling override."+Environment.NewLine);
                 File.AppendAllText(diagnostics,"GPU timing output: "+timing+"; diagnostic query overhead possible; scopes overlap and must not be summed."+Environment.NewLine);
-                if(profile=="measure-phases") {
+                if(profile=="measure-phases" || profile=="measure-no-reuse") {
                     string phases=Path.Combine(logs,"cpu-draw-phases-"+Guid.NewGuid().ToString("N")+".jsonl");
                     start.EnvironmentVariables["BEN10_CPU_DRAW_PHASES"]=phases;
                     File.AppendAllText(diagnostics,"CPU draw phase output: "+phases+"; sequential wall time including driver calls; instrumentation overhead possible."+Environment.NewLine);
