@@ -8,13 +8,81 @@
 The candidate is an opt-in diagnostic profile; no community Alpha 5 installer
 has been published yet. The upstream Alpha baseline below is preserved.
 
+[Community Releases](https://github.com/nour9264/Cosmic-Recomp-work/releases) ·
+[Performance report](docs/PERFORMANCE_ALPHA5.md)
+
+## Community performance update — Alpha 5 candidate
+
+Local testing identified a major CPU-side upload-reuse bottleneck on an
+NVIDIA GeForce RTX 4060 Laptop GPU. The affected area previously ran at about
+15 game FPS. `UploadAudit::Observe`, which compares uploaded data against a
+shadow cache, consumed approximately 49–54 ms per frame in the slow capture.
+
+The tested candidate uses the existing full-upload path without that comparison.
+The user confirmed recovery to 30 FPS and smooth operation after selecting
+60 FPS. The latest six telemetry windows recorded **59.97–60.03 game FPS**, with
+the 60 FPS cap confirmed by cadence logs. Graphics-worker CPU wall time was
+approximately 3–5.4 ms per frame in those samples.
+
+This is a result from the affected area, not a campaign-wide guarantee or a
+controlled percentage benchmark. Above-30-FPS flicker, other hardware and
+comprehensive visual correctness remain open. See the performance report for
+the measurements, source changes and validation limits.
+
+For source testers, the current change is selected through the diagnostic
+bridge's `measure-no-reuse` profile. The ordinary shipping bridge and its
+defaults have not been changed automatically.
+
+## Planned community EXE release
+
+**Cosmic Recomp — Performance Improvement — Alpha 5** is the planned community
+release name. The proposed download is one installer:
+
+```text
+CosmicRecomp-Performance-Improvement-Alpha5-win64.exe
+```
+
+Once the installer is prepared, verified and uploaded, the player flow is:
+
+1. Download and run the EXE from this repository's Releases page.
+2. Choose an installation folder. The installer unpacks its bundled runtime
+   into `app/<package-hash>/` and opens the launcher. The chosen folder also
+   receives `game-data/`, `logs/` and `temp/`; these are created locally during
+   setup and use, not copied from the maintainer's personal installation.
+3. In the launcher, choose **Select ISO** and select your own supported Xbox 360
+   copy. Wait for validation, then choose **Prepare game**.
+4. Select **Play**. Later launches use the installed launcher or its shortcut;
+   the same prepared installation does not require importing the ISO again.
+
+The EXE contains the launcher, bridge, precompiled native game runtime,
+dependencies and license notices. It does not contain an ISO, original game
+assets, personal saves, logs, caches or personal installation paths. Prepare
+imports the player's assets; it does not compile C++ on the player's computer.
+
+### Manual publication while Actions is unavailable
+
+Maintainers build locally and use the existing allowlisted
+`tools/build_portable_distribution.py` packager. Publication requires a coherent
+release stage, the tested performance setting, matching runtime hashes,
+source/license information, and an installer test in a separate folder.
+Do not package the working test installation or upload the bare launcher alone.
+
+After those checks, the repository owner can open **Releases → Draft a new
+release**, choose the tested source commit and a version tag, enter the English
+release notes, and attach the verified installer EXE and its SHA-256 checksum.
+Mark the initial community Alpha as a pre-release and identify its upstream base.
+The repository's automatic source ZIP is source code, not the playable installer.
+
+**Current status:** source changes and the local performance report are published.
+The one-file community installer and its packaging verification are still pending.
+
 Experimental Windows 10/11 x64 native port of **Ben 10 Ultimate Alien: Cosmic Destruction** (Xbox 360), using ReXGlue v0.10.0 and Direct3D 12.
 
 **Alpha software. Camera/scenery flicker above 30 FPS is still present and is the next priority.**
 
 **Bring your own supported copy.** No ISO, XEX, original assets, generated game source or personal saves are distributed.
 
-[Download](https://github.com/ExtremestoneGG/Cosmic-Recompi/releases/tag/v0.4.0-alpha.4) · [User guide](USER_GUIDE.md) · [Build guide](BUILD.md) · [Contributor / coding-agent runbook](docs/CONTRIBUTOR_BUILD_RUNBOOK.md) · [Validation](VALIDATION.json) · [Sources](SOURCES.md)
+[Upstream Alpha 4 download](https://github.com/ExtremestoneGG/Cosmic-Recompi/releases/tag/v0.4.0-alpha.4) · [User guide](USER_GUIDE.md) · [Build guide](BUILD.md) · [Contributor / coding-agent runbook](docs/CONTRIBUTOR_BUILD_RUNBOOK.md) · [Validation](VALIDATION.json) · [Sources](SOURCES.md)
 
 Latest update: [animation and lever crash fixes](RELEASE_NOTES.md), including a manual phase-1 lever test. Rath upgrades with All Aliens disabled remain under investigation.
 
