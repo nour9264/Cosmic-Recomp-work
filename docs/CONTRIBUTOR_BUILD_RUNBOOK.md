@@ -164,6 +164,14 @@ configuration and package paths. A successful link alone does not prove runtime
 ABI compatibility. The SDL presentation extension and overlay virtual interface
 must come from the same SDK headers and binaries.
 
+The consumer explicitly enables SSE4.1 for x64 clang-cl, matching the SDK's
+GNU-style Clang helper. Without it, SIMDe's generated nearest-even rounding
+can lower to `roundevenf`, which the local Windows CRT does not export.
+`tests/pc_vector_rounding.cpp` checks the native path across 48 lane cases,
+including ties, signed zero, non-finite inputs and all four MXCSR rounding modes.
+The focused check passed locally with Clang 23.1.4; gameplay remains a separate
+validation step.
+
 ## 7. Build the separate launcher and matching bridge
 
 If the UI dependency is absent:

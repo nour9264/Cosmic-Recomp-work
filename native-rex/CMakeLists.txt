@@ -26,6 +26,15 @@ rexglue_setup_target(ben10 GPU_PLUGINS xenos)
 target_compile_options(ben10 PRIVATE /EHsc)
 target_compile_options(ben10_recomp PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/frame_metrics.h")
 
+# The SDK enables SSE4.1 for GNU-style Clang, but its helper skips clang-cl.
+# Keep SIMDe's nearest-even vector rounding native rather than introducing a
+# roundevenf CRT dependency unavailable in the Windows runtime.
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64)$")
+    target_compile_options(ben10 PRIVATE /clang:-msse4.1)
+    target_compile_options(ben10_recomp PRIVATE /clang:-msse4.1)
+endif()
+
 # Optional isolated equivalence target. It reuses the original-byte oracle
 # corpus; it is deliberately separate from gameplay compatibility checks.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../build/rex-leaf-tests/main.cpp")
