@@ -1,8 +1,7 @@
-# Performance Improvement — Alpha 5 candidate
+# Performance Improvement â€” Alpha 5 candidate
 
 Community contribution based on upstream `a99e9ea`. This document records local
-evidence; it is not an official upstream release announcement. No downloadable
-Alpha 5 installer has been published by this contribution yet.
+evidence; it is not an official upstream release announcement. The community release description is in [ALPHA5_RELEASE.md](ALPHA5_RELEASE.md).
 
 ## Problem and attribution
 
@@ -15,7 +14,7 @@ Additional shared-memory instrumentation located the dominant cost in
 `ben10_profile::UploadAudit::Observe`, called from
 `D3D12SharedMemory::UploadRanges`:
 
-- Observe: approximately 49–54 ms/frame in the slow capture.
+- Observe: approximately 49â€“54 ms/frame in the slow capture.
 - Observe accounted for 97.7% of RequestRanges wall time in the final 12 slow
   reporting windows; memcpy accounted for 0.57%, and page-scan lock acquisition
   for 0.10%.
@@ -44,8 +43,8 @@ plugin rebuild, without changing SDK class layouts or exports.
 
 The user reported recovery to 30 FPS, then smooth operation at the selected
 60 FPS limit in the affected area. The latest six telemetry windows recorded
-59.97–60.03 game FPS; cadence rows confirmed the 60 FPS cap. Graphics-worker CPU
-wall time in those samples was approximately 3–5.4 ms/frame, and the measured
+59.97â€“60.03 game FPS; cadence rows confirmed the 60 FPS cap. Graphics-worker CPU
+wall time in those samples was approximately 3â€“5.4 ms/frame, and the measured
 reuse-comparison subtotal was zero. Both test sessions exited with code 0.
 
 This is scene-level evidence, not a controlled input replay. Baseline and
@@ -87,3 +86,13 @@ assets, generated title C++, saves, caches, raw personal logs and machine paths
 are excluded from Git. Public installer packaging, source/license completeness
 and installer verification remain separate work. GitHub Actions is unavailable
 for the account at the time of these local tests.
+
+## Alpha 5 release configuration
+
+Build with `--hero-time --gpu-diagnostics --performance-alpha5` to select the
+tested no-reuse profile automatically on fresh and existing installations.
+The original diagnostic build remains available for reference comparisons.
+The user subsequently reported that the previous screen shaking disappeared
+in their test. This does not establish a separate flicker-specific fix.
+Packaging rebuilds use source-path mappings; final packaging checks and remaining
+gameplay limits are recorded in the release validation asset.

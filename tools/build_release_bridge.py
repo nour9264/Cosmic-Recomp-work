@@ -3,7 +3,8 @@ import argparse,os,subprocess
 from pathlib import Path
 from prepare_all_aliens_candidate import ROOT,authored,encode
 
-parser=argparse.ArgumentParser();parser.add_argument('--rath-disabled',action='store_true');parser.add_argument('--hero-time',action='store_true');parser.add_argument('--gpu-diagnostics',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--rath-disabled',action='store_true');parser.add_argument('--hero-time',action='store_true');parser.add_argument('--gpu-diagnostics',action='store_true');parser.add_argument('--performance-alpha5',action='store_true');args=parser.parse_args()
+assert not args.performance_alpha5 or (args.hero_time and args.gpu_diagnostics),'Alpha 5 requires explicit --hero-time --gpu-diagnostics'
 assert not (args.rath_disabled and args.hero_time)
 # The current contributor default must include the released authored features.
 # Keep --hero-time accepted for existing reproducible release commands.
@@ -20,7 +21,7 @@ os.environ.update(TEMP=str(ROOT/'data/temp'),TMP=str(ROOT/'data/temp'))
 csc=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 sources=[str(ROOT/'launcher'/n) for n in ['NativeBridge.cs','InstalledGame.cs','IsoImage.cs','GameMenuPatch.cs','AllAliensPatch.cs','SaveReset.cs']]
 subprocess.run([str(csc),'/nologo','/optimize+','/target:winexe','/platform:x64',
- '/define:'+('COSMIC_DISABLE_RATH' if args.rath_disabled else 'COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS'+(';COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS' if args.hero_time else '')+(';COSMIC_GPU_DIAGNOSTICS' if args.gpu_diagnostics else '')),'/win32manifest:'+str(ROOT/'launcher/windows.manifest'),
+ '/define:'+('COSMIC_DISABLE_RATH' if args.rath_disabled else 'COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS'+(';COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS' if args.hero_time else '')+(';COSMIC_GPU_DIAGNOSTICS' if args.gpu_diagnostics else '')+(';COSMIC_PERFORMANCE_ALPHA5' if args.performance_alpha5 else '')),'/win32manifest:'+str(ROOT/'launcher/windows.manifest'),
  '/reference:System.Windows.Forms.dll','/resource:'+str(program)+',CosmicAllAliens.bin',
  *hero_arguments,'/out:'+str(out/'CosmicBridge.exe'),*sources],check=True)
 print('Legacy exclusion bridge built.' if args.rath_disabled else 'Corrected animation/settings bridge built; matching API 7 runtime required.')

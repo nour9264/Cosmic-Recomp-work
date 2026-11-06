@@ -10,6 +10,19 @@ using System; using System.IO; using System.Diagnostics; using CosmicRecompi;
 class Driver {
  static int Main(string[] args) {
   string root=args[0], log=Path.Combine(root,"test.log"), file=Path.Combine(root,"graphics-diagnostic-profile.txt");
+#if COSMIC_PERFORMANCE_ALPHA5
+  foreach(string oldProfile in new string[]{null,"standard","measure-phases","unknown"}) {
+   if(oldProfile==null)File.Delete(file);else File.WriteAllText(file,oldProfile);
+   var start=new ProcessStartInfo();
+   start.EnvironmentVariables["BEN10_REUSE_UPLOADS"]="1";
+   start.EnvironmentVariables["BEN10_UPLOAD_AUDIT"]="old-observer.jsonl";
+   InstalledGame.ApplyGraphicsDiagnosticProfile(root,start,log);
+   if(start.EnvironmentVariables["BEN10_REUSE_UPLOADS"]!=null || start.EnvironmentVariables["BEN10_UPLOAD_AUDIT"]!=null)return 30;
+   foreach(string key in new string[]{"BEN10_D3D12_PROFILE","BEN10_CPU_DRAW_PHASES","BEN10_FRAME_CADENCE_LOG","BEN10_VBLANK_AUDIT"})
+    if(String.IsNullOrEmpty(start.EnvironmentVariables[key]))return 31;
+  }
+  Console.WriteLine("Alpha 5 selects the tested no-reuse profile on fresh and existing installations.");return 0;
+#else
   string[] profiles={"standard","gpu-bounds","viewport","stencil"};
   string[] keys={"BEN10_EDRAM_BOUNDS","BEN10_INTEL_VIEWPORT","BEN10_INTEL_STENCIL"};
   for(int i=0;i<4;i++) {
@@ -46,6 +59,7 @@ class Driver {
     if(String.IsNullOrEmpty(measured.EnvironmentVariables[key]))return 29;
   }
   Console.WriteLine("Profile isolation, no-reuse/full-copy selection, retained telemetry and invalid-profile rejection passed."); return 0;
+#endif
  }
 }
 ''')
@@ -54,4 +68,7 @@ exe=out/'check.exe'
 sources=[root/'launcher'/name for name in ('NativeBridge.cs','InstalledGame.cs','IsoImage.cs','GameMenuPatch.cs','AllAliensPatch.cs','SaveReset.cs')]
 subprocess.run([str(csc),'/nologo','/target:exe','/main:Driver','/define:COSMIC_GPU_DIAGNOSTICS;COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS;COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS','/reference:System.Windows.Forms.dll','/out:'+str(exe),str(driver),*map(str,sources)],check=True)
 subprocess.run([str(exe),str(out)],check=True)
+alpha=out/'alpha5-check.exe'
+subprocess.run([str(csc),'/nologo','/target:exe','/main:Driver','/define:COSMIC_GPU_DIAGNOSTICS;COSMIC_PERFORMANCE_ALPHA5;COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS;COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS','/reference:System.Windows.Forms.dll','/out:'+str(alpha),str(driver),*map(str,sources)],check=True)
+subprocess.run([str(alpha),str(out)],check=True)
 (out/'report.json').write_text(json.dumps(dict(passed=True,profile_isolation=True,no_reuse_profile=True,shadow_observer_disabled_with_reuse=True,telemetry_retained=True,missing_file_experimental_default=True,invalid_rejected=True,game_started=False,rtx4060_tested=False),indent=2)+'\n')

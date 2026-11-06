@@ -3,15 +3,15 @@
 <a id="english"></a>
 # Cosmic Recomp
 
-**Community work — Performance Improvement / Alpha 5 candidate:** see the
+**Community work — Alpha 5:** see the
 [local performance investigation and reproduction steps](docs/PERFORMANCE_ALPHA5.md).
-The candidate is an opt-in diagnostic profile; no community Alpha 5 installer
-has been published yet. The upstream Alpha baseline below is preserved.
+The community Alpha 5 bridge automatically selects the tested performance path.
+See the [Alpha 5 release notes](docs/ALPHA5_RELEASE.md). The upstream Alpha 4 reference below is preserved.
 
 [Community Releases](https://github.com/nour9264/Cosmic-Recomp-work/releases) ·
 [Performance report](docs/PERFORMANCE_ALPHA5.md)
 
-## Community performance update — Alpha 5 candidate
+## Community performance update — Alpha 5
 
 Local testing identified a major CPU-side upload-reuse bottleneck on an
 NVIDIA GeForce RTX 4060 Laptop GPU. The affected area previously ran at about
@@ -25,24 +25,24 @@ the 60 FPS cap confirmed by cadence logs. Graphics-worker CPU wall time was
 approximately 3–5.4 ms per frame in those samples.
 
 This is a result from the affected area, not a campaign-wide guarantee or a
-controlled percentage benchmark. Above-30-FPS flicker, other hardware and
-comprehensive visual correctness remain open. See the performance report for
+controlled percentage benchmark. The player also reports that the previous screen
+shaking disappeared in the test. A separate flicker-specific fix, other hardware
+and comprehensive visual correctness remain unverified. See the performance report for
 the measurements, source changes and validation limits.
 
-For source testers, the current change is selected through the diagnostic
-bridge's `measure-no-reuse` profile. The ordinary shipping bridge and its
-defaults have not been changed automatically.
+Alpha 5 selects `measure-no-reuse` automatically, including when an old diagnostic
+profile file exists. Build it with `--hero-time --gpu-diagnostics --performance-alpha5`.
+The ordinary bridge without this Alpha 5 flag retains its previous defaults.
 
-## Planned community EXE release
+## Community EXE release
 
-**Cosmic Recomp — Performance Improvement — Alpha 5** is the planned community
-release name. The proposed download is one installer:
+**Cosmic Recomp — Alpha 5** is a community pre-release distributed as one installer:
 
 ```text
-CosmicRecomp-Performance-Improvement-Alpha5-win64.exe
+CosmicRecomp-Alpha5-win64.exe
 ```
 
-Once the installer is prepared, verified and uploaded, the player flow is:
+The player flow is:
 
 1. Download and run the EXE from this repository's Releases page.
 2. Choose an installation folder. The installer unpacks its bundled runtime
@@ -73,8 +73,11 @@ release notes, and attach the verified installer EXE and its SHA-256 checksum.
 Mark the initial community Alpha as a pre-release and identify its upstream base.
 The repository's automatic source ZIP is source code, not the playable installer.
 
-**Current status:** source changes and the local performance report are published.
-The one-file community installer and its packaging verification are still pending.
+Release artifacts and validation details are listed on the
+[Alpha 5 release page](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5).
+See the attached validation file for packaging checks and gameplay limits.
+
+## Upstream Alpha 4 reference
 
 Experimental Windows 10/11 x64 native port of **Ben 10 Ultimate Alien: Cosmic Destruction** (Xbox 360), using ReXGlue v0.10.0 and Direct3D 12.
 

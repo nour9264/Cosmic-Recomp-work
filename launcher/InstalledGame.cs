@@ -11,8 +11,13 @@ namespace CosmicRecompi {
         // Experimental package only. Keep each comparison to one changed path;
         // the normal release never reads this file or changes its defaults.
         internal static void ApplyGraphicsDiagnosticProfile(string root, ProcessStartInfo start, string diagnostics) {
+#if COSMIC_PERFORMANCE_ALPHA5
+            // Community Alpha 5 must use the tested path on fresh and updated installs.
+            string profile="measure-no-reuse";
+#else
             string profilePath=Path.Combine(root,"graphics-diagnostic-profile.txt");
             string profile=File.Exists(profilePath)?File.ReadAllText(profilePath).Trim():"measure-phases";
+#endif
             switch(profile) {
                 case "standard": case "measure-standard": case "measure-phases": break;
                 case "measure-no-reuse":
@@ -45,7 +50,7 @@ namespace CosmicRecompi {
                     File.AppendAllText(diagnostics,"CPU draw phase output: "+phases+"; sequential wall time including driver calls; instrumentation overhead possible."+Environment.NewLine);
                 }
             }
-            File.AppendAllText(diagnostics,DateTime.UtcNow.ToString("o")+" Experimental graphics profile="+profile+"; RTX 4060 validation pending; no FPS gain established."+Environment.NewLine);
+            File.AppendAllText(diagnostics,DateTime.UtcNow.ToString("o")+" Experimental graphics profile="+profile+"; see release validation for measured results and limits."+Environment.NewLine);
         }
 #endif
         internal static string LauncherLog(string root) {
