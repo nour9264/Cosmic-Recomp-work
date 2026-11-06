@@ -368,7 +368,7 @@ index 7642601..b3c043d 100644
   protected:
    void OnDraw(ImGuiIO& io) override;
 diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
-index 19874a5..a01b948 100644
+index 19874a5..ce377ba 100644
 --- a/src/graphics/d3d12/command_processor.cpp
 +++ b/src/graphics/d3d12/command_processor.cpp
 @@ -1,3 +1,4 @@
@@ -767,7 +767,7 @@ index 19874a5..a01b948 100644
          view_gpu_handle.ptr += descriptor_size_view;
        }
 diff --git a/src/graphics/d3d12/deferred_command_list.cpp b/src/graphics/d3d12/deferred_command_list.cpp
-index e6d6277..986c3bf 100644
+index e6d6277..91487c6 100644
 --- a/src/graphics/d3d12/deferred_command_list.cpp
 +++ b/src/graphics/d3d12/deferred_command_list.cpp
 @@ -9,6 +9,7 @@
@@ -1063,7 +1063,7 @@ index 8e6b854..fa30e4b 100644
      if (state_desc.DepthStencilState.DepthEnable || state_desc.DepthStencilState.StencilEnable) {
        state_desc.DSVFormat =
 diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
-index dd321a5..5963542 100644
+index dd321a5..6710a82 100644
 --- a/src/graphics/d3d12/render_target_cache.cpp
 +++ b/src/graphics/d3d12/render_target_cache.cpp
 @@ -11,6 +11,7 @@
@@ -1458,10 +1458,10 @@ index dd321a5..5963542 100644
          switch (dest_rt_key.GetDepthFormat()) {
            case xenos::DepthRenderTargetFormat::kD24S8:
 diff --git a/src/graphics/d3d12/shared_memory.cpp b/src/graphics/d3d12/shared_memory.cpp
-index a5c97a0..bf70b12 100644
+index a5c97a0..79144f6 100644
 --- a/src/graphics/d3d12/shared_memory.cpp
 +++ b/src/graphics/d3d12/shared_memory.cpp
-@@ -9,6 +9,8 @@
+@@ -9,9 +9,12 @@
   * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
   */
  
@@ -1470,7 +1470,11 @@ index a5c97a0..bf70b12 100644
  #include <cstring>
  #include <utility>
  #include <vector>
-@@ -138,10 +140,22 @@ bool D3D12SharedMemory::Initialize() {
++#include "@COSMIC_CONSUMER@/shared_memory_audit.h"
+ 
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+@@ -138,10 +141,22 @@ bool D3D12SharedMemory::Initialize() {
        provider, rex::align(ui::d3d12::D3D12UploadBufferPool::kDefaultPageSize,
                             size_t(1) << page_size_log2()));
  
@@ -1493,7 +1497,7 @@ index a5c97a0..bf70b12 100644
    upload_buffer_pool_.reset();
  
    ui::d3d12::util::ReleaseAndNull(buffer_descriptor_heap_);
-@@ -306,9 +320,16 @@ bool D3D12SharedMemory::UploadRanges(
+@@ -306,30 +321,66 @@ bool D3D12SharedMemory::UploadRanges(
    if (upload_page_ranges.empty()) {
      return true;
    }
@@ -1502,6 +1506,7 @@ index a5c97a0..bf70b12 100644
 +  bool copy_ready=false;
 +  auto prepare_copy=[&]() {
 +    if(copy_ready) return;
++    ben10_shared_audit::UploadSpan audit(ben10_shared_audit::PrepareCopy);
 +    CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
 +    command_processor_.SubmitBarriers();
 +    copy_ready=true;
@@ -1512,34 +1517,63 @@ index a5c97a0..bf70b12 100644
    for (auto upload_range : upload_page_ranges) {
      uint32_t upload_range_start = upload_range.first;
      uint32_t upload_range_length = upload_range.second;
-@@ -327,9 +348,22 @@ bool D3D12SharedMemory::UploadRanges(
-       std::memcpy(upload_buffer_mapping,
+     while (upload_range_length != 0) {
+       ID3D12Resource* upload_buffer;
+       size_t upload_buffer_offset, upload_buffer_size;
+-      uint8_t* upload_buffer_mapping = upload_buffer_pool_->RequestPartial(
++      uint8_t* upload_buffer_mapping;
++      {
++        ben10_shared_audit::UploadSpan audit(ben10_shared_audit::RequestBuffer);
++        upload_buffer_mapping = upload_buffer_pool_->RequestPartial(
+           command_processor_.GetCurrentSubmission(), upload_range_length << page_size_log2(),
+           size_t(1) << page_size_log2(), &upload_buffer, &upload_buffer_offset, &upload_buffer_size,
+           nullptr);
++      }
+       if (upload_buffer_mapping == nullptr) {
+         REXGPU_ERROR("Shared memory: Failed to get an upload buffer");
+         return false;
+       }
+-      MakeRangeValid(upload_range_start << page_size_log2(), uint32_t(upload_buffer_size), false);
+-      std::memcpy(upload_buffer_mapping,
++      {
++        ben10_shared_audit::UploadSpan audit(ben10_shared_audit::MakeValid);
++        MakeRangeValid(upload_range_start << page_size_log2(), uint32_t(upload_buffer_size), false);
++      }
++      {
++        ben10_shared_audit::UploadSpan audit(ben10_shared_audit::Memcpy);
++        std::memcpy(upload_buffer_mapping,
                    memory().TranslatePhysical(upload_range_start << page_size_log2()),
                    upload_buffer_size);
 -      command_list.D3DCopyBufferRegion(buffer_, upload_range_start << page_size_log2(),
 -                                       upload_buffer, UINT64(upload_buffer_offset),
 -                                       UINT64(upload_buffer_size));
-+      if(ben10_upload_audit_)
++      }
++      if(ben10_upload_audit_) {
++        ben10_shared_audit::UploadSpan audit(ben10_shared_audit::Observe);
 +        ben10_upload_audit_->Observe(upload_range_start << page_size_log2(),
 +                                    upload_buffer_mapping,upload_buffer_size,
 +                                    ben10_reuse_uploads_ ? &changed : nullptr);
++      }
 +      if(ben10_reuse_uploads_) {
 +        for(const auto& range:changed) {
 +          prepare_copy();
++          ben10_shared_audit::UploadSpan audit(ben10_shared_audit::RecordCopies);
 +          command_list.D3DCopyBufferRegion(buffer_,
 +              (UINT64(upload_range_start) << page_size_log2())+range.first,
 +              upload_buffer,UINT64(upload_buffer_offset)+range.first,range.second);
 +        }
 +      } else {
++        ben10_shared_audit::UploadSpan audit(ben10_shared_audit::RecordCopies);
 +        command_list.D3DCopyBufferRegion(buffer_, upload_range_start << page_size_log2(),
 +                                         upload_buffer, UINT64(upload_buffer_offset),
 +                                         UINT64(upload_buffer_size));
 +      }
++      if(ben10_shared_audit::totals.enabled())ben10_shared_audit::totals.uploaded_bytes+=upload_buffer_size;
        uint32_t upload_buffer_pages = uint32_t(upload_buffer_size >> page_size_log2());
        upload_range_start += upload_buffer_pages;
        upload_range_length -= upload_buffer_pages;
 diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
-index 2be0e8e..be699dc 100644
+index 2be0e8e..42194d4 100644
 --- a/src/graphics/d3d12/texture_cache.cpp
 +++ b/src/graphics/d3d12/texture_cache.cpp
 @@ -9,6 +9,8 @@
@@ -1813,7 +1847,7 @@ index 2be0e8e..be699dc 100644
    descriptor_key.key = 0;
    descriptor_key.is_signed = uint32_t(is_signed);
 diff --git a/src/graphics/graphics_system.cpp b/src/graphics/graphics_system.cpp
-index 8f2fcb0..707e393 100644
+index 8f2fcb0..9360b09 100644
 --- a/src/graphics/graphics_system.cpp
 +++ b/src/graphics/graphics_system.cpp
 @@ -9,6 +9,7 @@
@@ -1854,7 +1888,7 @@ index 8f2fcb0..707e393 100644
          return 0;
        }));
 diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
-index 953c5fd..25c8e95 100644
+index 953c5fd..4afc2fe 100644
 --- a/src/graphics/pipeline/render_target/cache.cpp
 +++ b/src/graphics/pipeline/render_target/cache.cpp
 @@ -17,6 +17,7 @@
@@ -2435,1593 +2469,96 @@ index a7d508a..dc99504 100644
             dxbc::Src::LU(kSysFlag_DepthFloat24));
    // Convert according to the format.
    a_.OpIf(true, dxbc::Src::R(temp_temp).Select(temp_temp_component));
-diff --git a/src/graphics/shaders/ben10_direct_resolve_rgba8_1x.cs.hlsl b/src/graphics/shaders/ben10_direct_resolve_rgba8_1x.cs.hlsl
-new file mode 100644
-index 0000000..c80338e
---- /dev/null
-+++ b/src/graphics/shaders/ben10_direct_resolve_rgba8_1x.cs.hlsl
-@@ -0,0 +1,48 @@
-+// Research candidate for the existing SDK resolve path, not selected at runtime.
-+// Xenos tiling follows the SDK / Xenia algorithm (BSD-3-Clause, SDK LICENSE).
-+// Domain: unscaled RGBA8 color, guest and owner 1x, equal base/pitch, one owner,
-+// no source offset, no destination array, byte order 0 or 2, optional R/B swap.
-+// Root constants remain the original five DWORDs. CPU integration must prove
-+// complete ownership coverage and retain the generic path for every other case.
-+cbuffer ResolveConstants : register(b0) {
-+  uint edram_info;
-+  uint coordinate_info;
-+  uint dest_info;
-+  uint dest_coordinate_info;
-+  uint dest_base;
-+};
-+Texture2D<float4> source_image : register(t0);
-+RWBuffer<uint4> dest_data : register(u0);
-+
-+uint TiledAddress(uint2 pixel, uint pitch) {
-+  uint outer = ((pixel.y >> 5) * (pitch >> 5) + (pixel.x >> 5)) << 6;
-+  uint inner = (((pixel.y >> 1) & 7) << 3) | (pixel.x & 7);
-+  uint combined = (outer | inner) << 2;
-+  uint pipe = ((pixel.x >> 3) & 3) ^ (((pixel.y >> 3) & 1) << 1);
-+  return ((pixel.y & 1) << 4) | (pipe << 6) | (((pixel.y >> 4) & 1) << 11)
-+      | (combined & 15) | (((combined >> 4) & 1) << 5)
-+      | (((combined >> 5) & 7) << 8) | ((combined >> 8) << 12);
-+}
-+uint LoadPacked(uint2 pixel) {
-+  // The SDK RT dump uses this UNORM conversion before the generic resolve.
-+  uint4 value=uint4(source_image.Load(int3(pixel,0))*255.0f+0.5f);
-+  if(dest_info & 0x01000000u) value=value.bgra;
-+  uint packed=value.x|(value.y<<8)|(value.z<<16)|(value.w<<24);
-+  if((dest_info & 7u)==2u)
-+    packed=((packed & 255u)<<24)|((packed & 65280u)<<8)
-+        |((packed & 16711680u)>>8)|(packed>>24);
-+  return packed;
-+}
-+[numthreads(8,8,1)]
-+void main(uint3 id:SV_DispatchThreadID) {
-+  if(id.x>=((coordinate_info>>5)&2047u))return;
-+  uint2 pixel=uint2(id.x*8,id.y);
-+  uint4 first=uint4(LoadPacked(pixel),LoadPacked(pixel+uint2(1,0)),
-+      LoadPacked(pixel+uint2(2,0)),LoadPacked(pixel+uint2(3,0)));
-+  uint4 second=uint4(LoadPacked(pixel+uint2(4,0)),LoadPacked(pixel+uint2(5,0)),
-+      LoadPacked(pixel+uint2(6,0)),LoadPacked(pixel+uint2(7,0)));
-+  uint2 dest_pixel=pixel+uint2((dest_coordinate_info>>20)&15u,(dest_coordinate_info>>24)&15u)*8;
-+  uint address=(dest_base+TiledAddress(dest_pixel,(dest_coordinate_info&1023u)*32))>>4;
-+  dest_data[address]=first;
-+  dest_data[address+2]=second;
-+}
-diff --git a/src/graphics/shaders/ben10_texture_load_32bpb_2d.cs.hlsl b/src/graphics/shaders/ben10_texture_load_32bpb_2d.cs.hlsl
-new file mode 100644
-index 0000000..e9bbd63
---- /dev/null
-+++ b/src/graphics/shaders/ben10_texture_load_32bpb_2d.cs.hlsl
-@@ -0,0 +1,51 @@
-+// Exact specialization of the existing Xenia/ReXGlue texture loader.
-+// Xenos address mapping derived from the SDK's texture layout algorithm.
-+// Xenia shader algorithm: Copyright 2022 Ben Vanik, BSD-3-Clause (SDK LICENSE).
-+// Only 2D tiled, unscaled, single-layer, base-only, widths divisible by 8.
-+// Same typed buffer bindings, root constants, thread layout and byte operations.
-+#ifndef BEN10_TEXTURE_ENDIAN
-+#error BEN10_TEXTURE_ENDIAN must be 0 or 2
-+#endif
-+#if BEN10_TEXTURE_ENDIAN != 0 && BEN10_TEXTURE_ENDIAN != 2
-+#error Unsupported specialized byte order
-+#endif
-+cbuffer LoadConstants : register(b0) {
-+  uint flags;
-+  uint guest_offset;
-+  uint guest_pitch;
-+  uint guest_z_stride;
-+  uint3 size_blocks;
-+  uint host_offset;
-+  uint host_pitch;
-+  uint height_texels;
-+};
-+Buffer<uint4> source_data : register(t0);
-+RWBuffer<uint4> dest_data : register(u0);
-+
-+uint TiledAddress(uint2 pixel) {
-+  uint outer = ((pixel.y >> 5) * (guest_pitch >> 5) + (pixel.x >> 5)) << 6;
-+  uint inner = (((pixel.y >> 1) & 7) << 3) | (pixel.x & 7);
-+  uint combined = (outer | inner) << 2;
-+  uint pipe = ((pixel.x >> 3) & 3) ^ (((pixel.y >> 3) & 1) << 1);
-+  return ((pixel.y & 1) << 4) | (pipe << 6) | (((pixel.y >> 4) & 1) << 11)
-+      | (combined & 15) | (((combined >> 4) & 1) << 5)
-+      | (((combined >> 5) & 7) << 8) | ((combined >> 8) << 12);
-+}
-+uint4 ConvertEndian(uint4 value) {
-+#if BEN10_TEXTURE_ENDIAN == 2
-+  return ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8)
-+      | ((value & 0x00FF0000u) >> 8) | (value >> 24);
-+#else
-+  return value;
-+#endif
-+}
-+[numthreads(4,32,1)]
-+void main(uint3 thread_id : SV_DispatchThreadID) {
-+  uint2 pixel = thread_id.xy * uint2(8,1);
-+  if (pixel.x >= size_blocks.x || pixel.y >= size_blocks.y) return;
-+  uint src_byte = guest_offset + TiledAddress(pixel);
-+  uint dst_vector = (host_offset + pixel.y * host_pitch + pixel.x * 4) >> 4;
-+  dest_data[dst_vector] = ConvertEndian(source_data[src_byte >> 4]);
-+  // X[2] is byte address bit 5. Pixel X is divisible by 8 here.
-+  dest_data[dst_vector + 1] = ConvertEndian(source_data[(src_byte + 32) >> 4]);
-+}
-diff --git a/src/graphics/shaders/bytecode/d3d12_5_1/ben10_direct_resolve_rgba8_1x_cs.h b/src/graphics/shaders/bytecode/d3d12_5_1/ben10_direct_resolve_rgba8_1x_cs.h
-new file mode 100644
-index 0000000..fcf606e
---- /dev/null
-+++ b/src/graphics/shaders/bytecode/d3d12_5_1/ben10_direct_resolve_rgba8_1x_cs.h
-@@ -0,0 +1,1468 @@
-+#if 0
-+//
-+// Generated by Microsoft (R) HLSL Shader Compiler 10.1
-+//
-+//
-+// Buffer Definitions:
-+//
-+// cbuffer ResolveConstants
-+// {
-+//
-+//   uint edram_info;                   // Offset:    0 Size:     4 [unused]
-+//   uint coordinate_info;              // Offset:    4 Size:     4
-+//   uint dest_info;                    // Offset:    8 Size:     4
-+//   uint dest_coordinate_info;         // Offset:   12 Size:     4
-+//   uint dest_base;                    // Offset:   16 Size:     4
-+//
-+// }
-+//
-+//
-+// Resource Bindings:
-+//
-+// Name                                 Type  Format         Dim      ID      HLSL Bind  Count
-+// ------------------------------ ---------- ------- ----------- ------- -------------- ------
-+// source_image                      texture  float4          2d      T0             t0      1
-+// dest_data                             UAV   uint4         buf      U0             u0      1
-+// ResolveConstants                  cbuffer      NA          NA     CB0            cb0      1
-+//
-+//
-+//
-+// Input signature:
-+//
-+// Name                 Index   Mask Register SysValue  Format   Used
-+// -------------------- ----- ------ -------- -------- ------- ------
-+// no Input
-+//
-+// Output signature:
-+//
-+// Name                 Index   Mask Register SysValue  Format   Used
-+// -------------------- ----- ------ -------- -------- ------- ------
-+// no Output
-+cs_5_1
-+dcl_globalFlags refactoringAllowed
-+dcl_constantbuffer CB0[0:0][2], immediateIndexed, space=0
-+dcl_resource_texture2d (float,float,float,float) T0[0:0], space=0
-+dcl_uav_typed_buffer (uint,uint,uint,uint) U0[0:0], space=0
-+dcl_input vThreadID.xy
-+dcl_temps 5
-+dcl_thread_group 8, 8, 1
-+ubfe r0.x, l(11), l(5), CB0[0][0].y
-+uge r0.x, vThreadID.x, r0.x
-+if_nz r0.x
-+  ret
-+endif
-+ishl r0.x, vThreadID.x, l(3)
-+mov r0.y, vThreadID.y
-+mov r0.zw, l(0,0,0,0)
-+ld r1.xyzw, r0.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+and r0.zw, CB0[0][0].zzzz, l(0, 0, 0x01000000, 7)
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r3.x, r1.z, r1.x
-+ieq r0.w, r0.w, l(2)
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r3.xxxx, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r3.x, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(1, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r3.y, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r3.yyyy, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r3.y, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(2, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r3.z, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r3.zzzz, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r3.z, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(3, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r3.w, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r3.wwww, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r3.w, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(4, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r4.x, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r4.xxxx, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r4.x, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(5, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r4.y, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r4.yyyy, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r4.y, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(6, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r2.x, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r2.x, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r1.y, r2.x
-+or r1.x, r1.x, r1.y
-+or r4.z, r1.z, r1.x
-+if_nz r0.w
-+  ishl r1.x, r1.x, l(8)
-+  and r1.x, r1.x, l(0x00ff0000)
-+  bfi r1.x, l(8), l(24), r2.x, r1.x
-+  ushr r1.yz, r4.zzzz, l(0, 8, 24, 0)
-+  and r1.y, r1.y, l(0x0000ff00)
-+  iadd r1.x, r1.x, r1.y
-+  iadd r4.z, r1.x, r1.z
-+endif
-+iadd r1.xy, r0.xyxx, l(7, 0, 0, 0)
-+mov r1.zw, l(0,0,0,0)
-+ld r1.xyzw, r1.xyzw, T0[0].xyzw
-+mad r1.xyzw, r1.xyzw, l(255.000000, 255.000000, 255.000000, 255.000000), l(0.500000, 0.500000, 0.500000, 0.500000)
-+ftou r1.xyzw, r1.zxyw
-+if_nz r0.z
-+  mov r0.z, r1.x
-+  mov r1.x, r1.y
-+else
-+  mov r0.z, r1.y
-+endif
-+ishl r1.xyz, r1.xzwx, l(16, 8, 24, 0)
-+or r1.y, r0.z, r1.y
-+or r1.x, r1.x, r1.y
-+or r4.w, r1.z, r1.x
-+if_nz r0.w
-+  ishl r0.w, r1.x, l(8)
-+  and r0.w, r0.w, l(0x00ff0000)
-+  bfi r0.z, l(8), l(24), r0.z, r0.w
-+  ushr r1.xy, r4.wwww, l(8, 24, 0, 0)
-+  and r0.w, r1.x, l(0x0000ff00)
-+  iadd r0.z, r0.z, r0.w
-+  iadd r4.w, r0.z, r1.y
-+endif
-+ubfe r1.xyzw, l(4, 4, 4, 4), l(24, 20, 24, 24), CB0[0][0].wwww
-+ishl r1.xyzw, r1.xyzw, l(3, 3, 3, 3)
-+iadd r0.xyzw, r0.yxyy, r1.xyzw
-+bfi r1.x, l(10), l(5), CB0[0][0].w, l(0)
-+ushr r2.xyzw, r0.xyzw, l(5, 5, 1, 3)
-+ushr r0.x, r1.x, l(5)
-+imad r0.x, r2.x, r0.x, r2.y
-+bfi r1.xy, l(3, 1, 0, 0), l(3, 1, 0, 0), r2.zwzz, l(0, 0, 0, 0)
-+imad r0.x, r0.x, l(64), r1.x
-+ubfe r0.y, l(2), l(3), r0.y
-+xor r0.y, r1.y, r0.y
-+bfi r0.z, l(1), l(4), r0.w, l(0)
-+imad r0.y, r0.y, l(64), r0.z
-+ushr r0.z, r0.w, l(4)
-+bfi r0.z, l(1), l(11), r0.z, l(0)
-+iadd r0.y, r0.z, r0.y
-+ubfe r0.xz, l(27, 0, 24, 0), l(3, 0, 6, 0), r0.xxxx
-+bfi r0.x, l(3), l(8), r0.x, r0.y
-+bfi r0.x, l(20), l(12), r0.z, r0.x
-+iadd r0.x, r0.x, CB0[0][1].x
-+ushr r0.x, r0.x, l(4)
-+store_uav_typed U0[0].xyzw, r0.xxxx, r3.xyzw
-+iadd r0.x, r0.x, l(2)
-+store_uav_typed U0[0].xyzw, r0.xxxx, r4.xyzw
-+ret
-+// Approximately 225 instruction slots used
-+#endif
-+
-+const BYTE ben10_direct_resolve_rgba8_1x[] =
-+{
-+     68,  88,  66,  67,  66,  24,
-+    227,  18, 217, 114,  30,  20,
-+    210,  17,  69, 229,  71, 181,
-+     96, 240,   1,   0,   0,   0,
-+    220,  27,   0,   0,   5,   0,
-+      0,   0,  52,   0,   0,   0,
-+    148,   2,   0,   0, 164,   2,
-+      0,   0, 180,   2,   0,   0,
-+     64,  27,   0,   0,  82,  68,
-+     69,  70,  88,   2,   0,   0,
-+      1,   0,   0,   0, 220,   0,
-+      0,   0,   3,   0,   0,   0,
-+     60,   0,   0,   0,   1,   5,
-+     83,  67,   0, 133,   0,   0,
-+     45,   2,   0,   0,  19,  19,
-+     68,  37,  60,   0,   0,   0,
-+     24,   0,   0,   0,  40,   0,
-+      0,   0,  40,   0,   0,   0,
-+     36,   0,   0,   0,  12,   0,
-+      0,   0,   0,   0,   0,   0,
-+    180,   0,   0,   0,   2,   0,
-+      0,   0,   5,   0,   0,   0,
-+      4,   0,   0,   0, 255, 255,
-+    255, 255,   0,   0,   0,   0,
-+      1,   0,   0,   0,  12,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0, 193,   0,
-+      0,   0,   4,   0,   0,   0,
-+      4,   0,   0,   0,   1,   0,
-+      0,   0, 255, 255, 255, 255,
-+      0,   0,   0,   0,   1,   0,
-+      0,   0,  12,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0, 203,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   1,   0,   0,   0,
-+      1,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+    115, 111, 117, 114,  99, 101,
-+     95, 105, 109,  97, 103, 101,
-+      0, 100, 101, 115, 116,  95,
-+    100,  97, 116,  97,   0,  82,
-+    101, 115, 111, 108, 118, 101,
-+     67, 111, 110, 115, 116,  97,
-+    110, 116, 115,   0, 203,   0,
-+      0,   0,   5,   0,   0,   0,
-+    244,   0,   0,   0,  32,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0, 188,   1,
-+      0,   0,   0,   0,   0,   0,
-+      4,   0,   0,   0,   0,   0,
-+      0,   0, 208,   1,   0,   0,
-+      0,   0,   0,   0, 255, 255,
-+    255, 255,   0,   0,   0,   0,
-+    255, 255, 255, 255,   0,   0,
-+      0,   0, 244,   1,   0,   0,
-+      4,   0,   0,   0,   4,   0,
-+      0,   0,   2,   0,   0,   0,
-+    208,   1,   0,   0,   0,   0,
-+      0,   0, 255, 255, 255, 255,
-+      0,   0,   0,   0, 255, 255,
-+    255, 255,   0,   0,   0,   0,
-+      4,   2,   0,   0,   8,   0,
-+      0,   0,   4,   0,   0,   0,
-+      2,   0,   0,   0, 208,   1,
-+      0,   0,   0,   0,   0,   0,
-+    255, 255, 255, 255,   0,   0,
-+      0,   0, 255, 255, 255, 255,
-+      0,   0,   0,   0,  14,   2,
-+      0,   0,  12,   0,   0,   0,
-+      4,   0,   0,   0,   2,   0,
-+      0,   0, 208,   1,   0,   0,
-+      0,   0,   0,   0, 255, 255,
-+    255, 255,   0,   0,   0,   0,
-+    255, 255, 255, 255,   0,   0,
-+      0,   0,  35,   2,   0,   0,
-+     16,   0,   0,   0,   4,   0,
-+      0,   0,   2,   0,   0,   0,
-+    208,   1,   0,   0,   0,   0,
-+      0,   0, 255, 255, 255, 255,
-+      0,   0,   0,   0, 255, 255,
-+    255, 255,   0,   0,   0,   0,
-+    101, 100, 114,  97, 109,  95,
-+    105, 110, 102, 111,   0, 100,
-+    119, 111, 114, 100,   0, 171,
-+    171, 171,   0,   0,  19,   0,
-+      1,   0,   1,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0, 199,   1,
-+      0,   0,  99, 111, 111, 114,
-+    100, 105, 110,  97, 116, 101,
-+     95, 105, 110, 102, 111,   0,
-+    100, 101, 115, 116,  95, 105,
-+    110, 102, 111,   0, 100, 101,
-+    115, 116,  95,  99, 111, 111,
-+    114, 100, 105, 110,  97, 116,
-+    101,  95, 105, 110, 102, 111,
-+      0, 100, 101, 115, 116,  95,
-+     98,  97, 115, 101,   0,  77,
-+    105,  99, 114, 111, 115, 111,
-+    102, 116,  32,  40,  82,  41,
-+     32,  72,  76,  83,  76,  32,
-+     83, 104,  97, 100, 101, 114,
-+     32,  67, 111, 109, 112, 105,
-+    108, 101, 114,  32,  49,  48,
-+     46,  49,   0, 171, 171, 171,
-+     73,  83,  71,  78,   8,   0,
-+      0,   0,   0,   0,   0,   0,
-+      8,   0,   0,   0,  79,  83,
-+     71,  78,   8,   0,   0,   0,
-+      0,   0,   0,   0,   8,   0,
-+      0,   0,  83,  72,  69,  88,
-+    132,  24,   0,   0,  81,   0,
-+      5,   0,  33,   6,   0,   0,
-+    106,   8,   0,   1,  89,   0,
-+      0,   7,  70, 142,  48,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      2,   0,   0,   0,   0,   0,
-+      0,   0,  88,  24,   0,   7,
-+     70, 126,  48,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  85,  85,
-+      0,   0,   0,   0,   0,   0,
-+    156,   8,   0,   7,  70, 238,
-+     49,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  68,  68,   0,   0,
-+      0,   0,   0,   0,  95,   0,
-+      0,   2,  50,   0,   2,   0,
-+    104,   0,   0,   2,   5,   0,
-+      0,   0, 155,   0,   0,   4,
-+      8,   0,   0,   0,   8,   0,
-+      0,   0,   1,   0,   0,   0,
-+    138,   0,   0,  11,  18,   0,
-+     16,   0,   0,   0,   0,   0,
-+      1,  64,   0,   0,  11,   0,
-+      0,   0,   1,  64,   0,   0,
-+      5,   0,   0,   0,  26, 128,
-+     48,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  80,   0,   0,   6,
-+     18,   0,  16,   0,   0,   0,
-+      0,   0,  10,   0,   2,   0,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,  31,   0,   4,   3,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,  62,   0,   0,   1,
-+     21,   0,   0,   1,  41,   0,
-+      0,   6,  18,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+      2,   0,   1,  64,   0,   0,
-+      3,   0,   0,   0,  54,   0,
-+      0,   4,  34,   0,  16,   0,
-+      0,   0,   0,   0,  26,   0,
-+      2,   0,  54,   0,   0,   8,
-+    194,   0,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  45,   0,
-+      0,   8, 242,   0,  16,   0,
-+      1,   0,   0,   0,  70,  14,
-+     16,   0,   0,   0,   0,   0,
-+     70, 126,  32,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     50,   0,   0,  15, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      0,   0, 127,  67,   2,  64,
-+      0,   0,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+     28,   0,   0,   5, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     38,  13,  16,   0,   1,   0,
-+      0,   0,   1,   0,   0,  12,
-+    194,   0,  16,   0,   0,   0,
-+      0,   0, 166, 138,  48,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   1,   7,   0,
-+      0,   0,  31,   0,   4,   3,
-+     42,   0,  16,   0,   0,   0,
-+      0,   0,  54,   0,   0,   5,
-+     18,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     18,   0,   0,   1,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      2,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1,  41,   0,
-+      0,  10, 114,   0,  16,   0,
-+      1,   0,   0,   0, 134,   3,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,  16,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,  60,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   2,   0,   0,   0,
-+     60,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  60,   0,
-+      0,   7,  18,   0,  16,   0,
-+      3,   0,   0,   0,  42,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  32,   0,   0,   7,
-+    130,   0,  16,   0,   0,   0,
-+      0,   0,  58,   0,  16,   0,
-+      0,   0,   0,   0,   1,  64,
-+      0,   0,   2,   0,   0,   0,
-+     31,   0,   4,   3,  58,   0,
-+     16,   0,   0,   0,   0,   0,
-+     41,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   0,   0,
-+    255,   0, 140,   0,   0,  11,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,  64,
-+      0,   0,  24,   0,   0,   0,
-+     10,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  85,   0,
-+      0,  10,  98,   0,  16,   0,
-+      1,   0,   0,   0,   6,   0,
-+     16,   0,   3,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,   1,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   0, 255,   0,   0,
-+     30,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  30,   0,
-+      0,   7,  18,   0,  16,   0,
-+      3,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     30,   0,   0,  10,  50,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,   0,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+      1,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   8, 194,   0,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     45,   0,   0,   8, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,  70, 126,  32,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  50,   0,   0,  15,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  70,  14,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0, 127,  67,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      2,  64,   0,   0,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,  28,   0,   0,   5,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  38,  13,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  42,   0,  16,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      2,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  18,   0,   0,   1,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   2,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     41,   0,   0,  10, 114,   0,
-+     16,   0,   1,   0,   0,   0,
-+    134,   3,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+     16,   0,   0,   0,   8,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,  60,   0,
-+      0,   7,  34,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   2,   0,
-+      0,   0,  60,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     60,   0,   0,   7,  34,   0,
-+     16,   0,   3,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  58,   0,  16,   0,
-+      0,   0,   0,   0,  41,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   0,   0, 255,   0,
-+    140,   0,   0,  11,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,  64,   0,   0,
-+     24,   0,   0,   0,  10,   0,
-+     16,   0,   2,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  85,   0,   0,  10,
-+     98,   0,  16,   0,   1,   0,
-+      0,   0,  86,   5,  16,   0,
-+      3,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0,   0,   0,
-+      8,   0,   0,   0,  24,   0,
-+      0,   0,   0,   0,   0,   0,
-+      1,   0,   0,   7,  34,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0, 255,   0,   0,  30,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  30,   0,   0,   7,
-+     34,   0,  16,   0,   3,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  42,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1,  30,   0,
-+      0,  10,  50,   0,  16,   0,
-+      1,   0,   0,   0,  70,   0,
-+     16,   0,   0,   0,   0,   0,
-+      2,  64,   0,   0,   2,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  54,   0,   0,   8,
-+    194,   0,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  45,   0,
-+      0,   8, 242,   0,  16,   0,
-+      1,   0,   0,   0,  70,  14,
-+     16,   0,   1,   0,   0,   0,
-+     70, 126,  32,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     50,   0,   0,  15, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      0,   0, 127,  67,   2,  64,
-+      0,   0,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+     28,   0,   0,   5, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     38,  13,  16,   0,   1,   0,
-+      0,   0,  31,   0,   4,   3,
-+     42,   0,  16,   0,   0,   0,
-+      0,   0,  54,   0,   0,   5,
-+     18,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     18,   0,   0,   1,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      2,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1,  41,   0,
-+      0,  10, 114,   0,  16,   0,
-+      1,   0,   0,   0, 134,   3,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,  16,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,  60,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   2,   0,   0,   0,
-+     60,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  60,   0,
-+      0,   7,  66,   0,  16,   0,
-+      3,   0,   0,   0,  42,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  31,   0,   4,   3,
-+     58,   0,  16,   0,   0,   0,
-+      0,   0,  41,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   8,   0,   0,   0,
-+      1,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0,   0, 255,   0, 140,   0,
-+      0,  11,  18,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   8,   0,   0,   0,
-+      1,  64,   0,   0,  24,   0,
-+      0,   0,  10,   0,  16,   0,
-+      2,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     85,   0,   0,  10,  98,   0,
-+     16,   0,   1,   0,   0,   0,
-+    166,  10,  16,   0,   3,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   8,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,   1,   0,
-+      0,   7,  34,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   0, 255,
-+      0,   0,  30,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     30,   0,   0,   7,  66,   0,
-+     16,   0,   3,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  42,   0,  16,   0,
-+      1,   0,   0,   0,  21,   0,
-+      0,   1,  30,   0,   0,  10,
-+     50,   0,  16,   0,   1,   0,
-+      0,   0,  70,   0,  16,   0,
-+      0,   0,   0,   0,   2,  64,
-+      0,   0,   3,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     54,   0,   0,   8, 194,   0,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  45,   0,   0,   8,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  70,  14,  16,   0,
-+      1,   0,   0,   0,  70, 126,
-+     32,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  50,   0,
-+      0,  15, 242,   0,  16,   0,
-+      1,   0,   0,   0,  70,  14,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   2,  64,   0,   0,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+      0,   0,   0,  63,  28,   0,
-+      0,   5, 242,   0,  16,   0,
-+      1,   0,   0,   0,  38,  13,
-+     16,   0,   1,   0,   0,   0,
-+     31,   0,   4,   3,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   2,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  54,   0,   0,   5,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  18,   0,
-+      0,   1,  54,   0,   0,   5,
-+     18,   0,  16,   0,   2,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  21,   0,
-+      0,   1,  41,   0,   0,  10,
-+    114,   0,  16,   0,   1,   0,
-+      0,   0, 134,   3,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,  16,   0,   0,   0,
-+      8,   0,   0,   0,  24,   0,
-+      0,   0,   0,   0,   0,   0,
-+     60,   0,   0,   7,  34,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      2,   0,   0,   0,  60,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  60,   0,   0,   7,
-+    130,   0,  16,   0,   3,   0,
-+      0,   0,  42,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     31,   0,   4,   3,  58,   0,
-+     16,   0,   0,   0,   0,   0,
-+     41,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   0,   0,
-+    255,   0, 140,   0,   0,  11,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,  64,
-+      0,   0,  24,   0,   0,   0,
-+     10,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  85,   0,
-+      0,  10,  98,   0,  16,   0,
-+      1,   0,   0,   0, 246,  15,
-+     16,   0,   3,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,   1,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   0, 255,   0,   0,
-+     30,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  30,   0,
-+      0,   7, 130,   0,  16,   0,
-+      3,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     30,   0,   0,  10,  50,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,   0,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+      4,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   8, 194,   0,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     45,   0,   0,   8, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,  70, 126,  32,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  50,   0,   0,  15,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  70,  14,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0, 127,  67,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      2,  64,   0,   0,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,  28,   0,   0,   5,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  38,  13,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  42,   0,  16,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      2,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  18,   0,   0,   1,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   2,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     41,   0,   0,  10, 114,   0,
-+     16,   0,   1,   0,   0,   0,
-+    134,   3,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+     16,   0,   0,   0,   8,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,  60,   0,
-+      0,   7,  34,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   2,   0,
-+      0,   0,  60,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     60,   0,   0,   7,  18,   0,
-+     16,   0,   4,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  58,   0,  16,   0,
-+      0,   0,   0,   0,  41,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   0,   0, 255,   0,
-+    140,   0,   0,  11,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,  64,   0,   0,
-+     24,   0,   0,   0,  10,   0,
-+     16,   0,   2,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  85,   0,   0,  10,
-+     98,   0,  16,   0,   1,   0,
-+      0,   0,   6,   0,  16,   0,
-+      4,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0,   0,   0,
-+      8,   0,   0,   0,  24,   0,
-+      0,   0,   0,   0,   0,   0,
-+      1,   0,   0,   7,  34,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0, 255,   0,   0,  30,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  30,   0,   0,   7,
-+     18,   0,  16,   0,   4,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  42,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1,  30,   0,
-+      0,  10,  50,   0,  16,   0,
-+      1,   0,   0,   0,  70,   0,
-+     16,   0,   0,   0,   0,   0,
-+      2,  64,   0,   0,   5,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  54,   0,   0,   8,
-+    194,   0,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  45,   0,
-+      0,   8, 242,   0,  16,   0,
-+      1,   0,   0,   0,  70,  14,
-+     16,   0,   1,   0,   0,   0,
-+     70, 126,  32,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     50,   0,   0,  15, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      0,   0, 127,  67,   2,  64,
-+      0,   0,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+     28,   0,   0,   5, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     38,  13,  16,   0,   1,   0,
-+      0,   0,  31,   0,   4,   3,
-+     42,   0,  16,   0,   0,   0,
-+      0,   0,  54,   0,   0,   5,
-+     18,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     18,   0,   0,   1,  54,   0,
-+      0,   5,  18,   0,  16,   0,
-+      2,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1,  41,   0,
-+      0,  10, 114,   0,  16,   0,
-+      1,   0,   0,   0, 134,   3,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,  16,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,  60,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   2,   0,   0,   0,
-+     60,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  60,   0,
-+      0,   7,  34,   0,  16,   0,
-+      4,   0,   0,   0,  42,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  31,   0,   4,   3,
-+     58,   0,  16,   0,   0,   0,
-+      0,   0,  41,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   8,   0,   0,   0,
-+      1,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0,   0, 255,   0, 140,   0,
-+      0,  11,  18,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   8,   0,   0,   0,
-+      1,  64,   0,   0,  24,   0,
-+      0,   0,  10,   0,  16,   0,
-+      2,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     85,   0,   0,  10,  98,   0,
-+     16,   0,   1,   0,   0,   0,
-+     86,   5,  16,   0,   4,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   8,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,   1,   0,
-+      0,   7,  34,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   0, 255,
-+      0,   0,  30,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     30,   0,   0,   7,  34,   0,
-+     16,   0,   4,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  42,   0,  16,   0,
-+      1,   0,   0,   0,  21,   0,
-+      0,   1,  30,   0,   0,  10,
-+     50,   0,  16,   0,   1,   0,
-+      0,   0,  70,   0,  16,   0,
-+      0,   0,   0,   0,   2,  64,
-+      0,   0,   6,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     54,   0,   0,   8, 194,   0,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  45,   0,   0,   8,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  70,  14,  16,   0,
-+      1,   0,   0,   0,  70, 126,
-+     32,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  50,   0,
-+      0,  15, 242,   0,  16,   0,
-+      1,   0,   0,   0,  70,  14,
-+     16,   0,   1,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   2,  64,   0,   0,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+      0,   0,   0,  63,  28,   0,
-+      0,   5, 242,   0,  16,   0,
-+      1,   0,   0,   0,  38,  13,
-+     16,   0,   1,   0,   0,   0,
-+     31,   0,   4,   3,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   2,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  54,   0,   0,   5,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  18,   0,
-+      0,   1,  54,   0,   0,   5,
-+     18,   0,  16,   0,   2,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  21,   0,
-+      0,   1,  41,   0,   0,  10,
-+    114,   0,  16,   0,   1,   0,
-+      0,   0, 134,   3,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,  16,   0,   0,   0,
-+      8,   0,   0,   0,  24,   0,
-+      0,   0,   0,   0,   0,   0,
-+     60,   0,   0,   7,  34,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      2,   0,   0,   0,  60,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  60,   0,   0,   7,
-+     66,   0,  16,   0,   4,   0,
-+      0,   0,  42,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     31,   0,   4,   3,  58,   0,
-+     16,   0,   0,   0,   0,   0,
-+     41,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,   0,
-+      0,   7,  18,   0,  16,   0,
-+      1,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   0,   0,
-+    255,   0, 140,   0,   0,  11,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      8,   0,   0,   0,   1,  64,
-+      0,   0,  24,   0,   0,   0,
-+     10,   0,  16,   0,   2,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  85,   0,
-+      0,  10,  98,   0,  16,   0,
-+      1,   0,   0,   0, 166,  10,
-+     16,   0,   4,   0,   0,   0,
-+      2,  64,   0,   0,   0,   0,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,   1,   0,   0,   7,
-+     34,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   0, 255,   0,   0,
-+     30,   0,   0,   7,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,  26,   0,  16,   0,
-+      1,   0,   0,   0,  30,   0,
-+      0,   7,  66,   0,  16,   0,
-+      4,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     30,   0,   0,  10,  50,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,   0,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+      7,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   8, 194,   0,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     45,   0,   0,   8, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,  70, 126,  32,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,  50,   0,   0,  15,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  70,  14,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   0,   0, 127,  67,
-+      0,   0, 127,  67,   0,   0,
-+    127,  67,   0,   0, 127,  67,
-+      2,  64,   0,   0,   0,   0,
-+      0,  63,   0,   0,   0,  63,
-+      0,   0,   0,  63,   0,   0,
-+      0,  63,  28,   0,   0,   5,
-+    242,   0,  16,   0,   1,   0,
-+      0,   0,  38,  13,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  42,   0,  16,   0,
-+      0,   0,   0,   0,  54,   0,
-+      0,   5,  66,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+     54,   0,   0,   5,  18,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  18,   0,   0,   1,
-+     54,   0,   0,   5,  66,   0,
-+     16,   0,   0,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  21,   0,   0,   1,
-+     41,   0,   0,  10, 114,   0,
-+     16,   0,   1,   0,   0,   0,
-+    134,   3,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+     16,   0,   0,   0,   8,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,  60,   0,
-+      0,   7,  34,   0,  16,   0,
-+      1,   0,   0,   0,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     26,   0,  16,   0,   1,   0,
-+      0,   0,  60,   0,   0,   7,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     60,   0,   0,   7, 130,   0,
-+     16,   0,   4,   0,   0,   0,
-+     42,   0,  16,   0,   1,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0,  31,   0,
-+      4,   3,  58,   0,  16,   0,
-+      0,   0,   0,   0,  41,   0,
-+      0,   7, 130,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,   0,   0,   7,
-+    130,   0,  16,   0,   0,   0,
-+      0,   0,  58,   0,  16,   0,
-+      0,   0,   0,   0,   1,  64,
-+      0,   0,   0,   0, 255,   0,
-+    140,   0,   0,  11,  66,   0,
-+     16,   0,   0,   0,   0,   0,
-+      1,  64,   0,   0,   8,   0,
-+      0,   0,   1,  64,   0,   0,
-+     24,   0,   0,   0,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     58,   0,  16,   0,   0,   0,
-+      0,   0,  85,   0,   0,  10,
-+     50,   0,  16,   0,   1,   0,
-+      0,   0, 246,  15,  16,   0,
-+      4,   0,   0,   0,   2,  64,
-+      0,   0,   8,   0,   0,   0,
-+     24,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      1,   0,   0,   7, 130,   0,
-+     16,   0,   0,   0,   0,   0,
-+     10,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0, 255,   0,   0,  30,   0,
-+      0,   7,  66,   0,  16,   0,
-+      0,   0,   0,   0,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     58,   0,  16,   0,   0,   0,
-+      0,   0,  30,   0,   0,   7,
-+    130,   0,  16,   0,   4,   0,
-+      0,   0,  42,   0,  16,   0,
-+      0,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     21,   0,   0,   1, 138,   0,
-+      0,  17, 242,   0,  16,   0,
-+      1,   0,   0,   0,   2,  64,
-+      0,   0,   4,   0,   0,   0,
-+      4,   0,   0,   0,   4,   0,
-+      0,   0,   4,   0,   0,   0,
-+      2,  64,   0,   0,  24,   0,
-+      0,   0,  20,   0,   0,   0,
-+     24,   0,   0,   0,  24,   0,
-+      0,   0, 246, 143,  48,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+     41,   0,   0,  10, 242,   0,
-+     16,   0,   1,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      3,   0,   0,   0,   3,   0,
-+      0,   0,   3,   0,   0,   0,
-+      3,   0,   0,   0,  30,   0,
-+      0,   7, 242,   0,  16,   0,
-+      0,   0,   0,   0,  22,   5,
-+     16,   0,   0,   0,   0,   0,
-+     70,  14,  16,   0,   1,   0,
-+      0,   0, 140,   0,   0,  13,
-+     18,   0,  16,   0,   1,   0,
-+      0,   0,   1,  64,   0,   0,
-+     10,   0,   0,   0,   1,  64,
-+      0,   0,   5,   0,   0,   0,
-+     58, 128,  48,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   1,  64,
-+      0,   0,   0,   0,   0,   0,
-+     85,   0,   0,  10, 242,   0,
-+     16,   0,   2,   0,   0,   0,
-+     70,  14,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+      5,   0,   0,   0,   5,   0,
-+      0,   0,   1,   0,   0,   0,
-+      3,   0,   0,   0,  85,   0,
-+      0,   7,  18,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+     16,   0,   1,   0,   0,   0,
-+      1,  64,   0,   0,   5,   0,
-+      0,   0,  35,   0,   0,   9,
-+     18,   0,  16,   0,   0,   0,
-+      0,   0,  10,   0,  16,   0,
-+      2,   0,   0,   0,  10,   0,
-+     16,   0,   0,   0,   0,   0,
-+     26,   0,  16,   0,   2,   0,
-+      0,   0, 140,   0,   0,  20,
-+     50,   0,  16,   0,   1,   0,
-+      0,   0,   2,  64,   0,   0,
-+      3,   0,   0,   0,   1,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   2,  64,
-+      0,   0,   3,   0,   0,   0,
-+      1,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+    230,  10,  16,   0,   2,   0,
-+      0,   0,   2,  64,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  35,   0,
-+      0,   9,  18,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+     16,   0,   0,   0,   0,   0,
-+      1,  64,   0,   0,  64,   0,
-+      0,   0,  10,   0,  16,   0,
-+      1,   0,   0,   0, 138,   0,
-+      0,   9,  34,   0,  16,   0,
-+      0,   0,   0,   0,   1,  64,
-+      0,   0,   2,   0,   0,   0,
-+      1,  64,   0,   0,   3,   0,
-+      0,   0,  26,   0,  16,   0,
-+      0,   0,   0,   0,  87,   0,
-+      0,   7,  34,   0,  16,   0,
-+      0,   0,   0,   0,  26,   0,
-+     16,   0,   1,   0,   0,   0,
-+     26,   0,  16,   0,   0,   0,
-+      0,   0, 140,   0,   0,  11,
-+     66,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,   4,   0,   0,   0,
-+     58,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0,   0,   0,   0,  35,   0,
-+      0,   9,  34,   0,  16,   0,
-+      0,   0,   0,   0,  26,   0,
-+     16,   0,   0,   0,   0,   0,
-+      1,  64,   0,   0,  64,   0,
-+      0,   0,  42,   0,  16,   0,
-+      0,   0,   0,   0,  85,   0,
-+      0,   7,  66,   0,  16,   0,
-+      0,   0,   0,   0,  58,   0,
-+     16,   0,   0,   0,   0,   0,
-+      1,  64,   0,   0,   4,   0,
-+      0,   0, 140,   0,   0,  11,
-+     66,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      1,   0,   0,   0,   1,  64,
-+      0,   0,  11,   0,   0,   0,
-+     42,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      0,   0,   0,   0,  30,   0,
-+      0,   7,  34,   0,  16,   0,
-+      0,   0,   0,   0,  42,   0,
-+     16,   0,   0,   0,   0,   0,
-+     26,   0,  16,   0,   0,   0,
-+      0,   0, 138,   0,   0,  15,
-+     82,   0,  16,   0,   0,   0,
-+      0,   0,   2,  64,   0,   0,
-+     27,   0,   0,   0,   0,   0,
-+      0,   0,  24,   0,   0,   0,
-+      0,   0,   0,   0,   2,  64,
-+      0,   0,   3,   0,   0,   0,
-+      0,   0,   0,   0,   6,   0,
-+      0,   0,   0,   0,   0,   0,
-+      6,   0,  16,   0,   0,   0,
-+      0,   0, 140,   0,   0,  11,
-+     18,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      3,   0,   0,   0,   1,  64,
-+      0,   0,   8,   0,   0,   0,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,  26,   0,  16,   0,
-+      0,   0,   0,   0, 140,   0,
-+      0,  11,  18,   0,  16,   0,
-+      0,   0,   0,   0,   1,  64,
-+      0,   0,  20,   0,   0,   0,
-+      1,  64,   0,   0,  12,   0,
-+      0,   0,  42,   0,  16,   0,
-+      0,   0,   0,   0,  10,   0,
-+     16,   0,   0,   0,   0,   0,
-+     30,   0,   0,   9,  18,   0,
-+     16,   0,   0,   0,   0,   0,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,  10, 128,  48,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   1,   0,   0,   0,
-+     85,   0,   0,   7,  18,   0,
-+     16,   0,   0,   0,   0,   0,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      4,   0,   0,   0, 164,   0,
-+      0,   8, 242, 224,  33,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   6,   0,  16,   0,
-+      0,   0,   0,   0,  70,  14,
-+     16,   0,   3,   0,   0,   0,
-+     30,   0,   0,   7,  18,   0,
-+     16,   0,   0,   0,   0,   0,
-+     10,   0,  16,   0,   0,   0,
-+      0,   0,   1,  64,   0,   0,
-+      2,   0,   0,   0, 164,   0,
-+      0,   8, 242, 224,  33,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   6,   0,  16,   0,
-+      0,   0,   0,   0,  70,  14,
-+     16,   0,   4,   0,   0,   0,
-+     62,   0,   0,   1,  83,  84,
-+     65,  84, 148,   0,   0,   0,
-+    225,   0,   0,   0,   5,   0,
-+      0,   0,   0,   0,   0,   0,
-+      1,   0,   0,   0,   8,   0,
-+      0,   0,  49,   0,   0,   0,
-+     55,   0,   0,   0,  10,   0,
-+      0,   0,  17,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      8,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,  33,   0,
-+      0,   0,   0,   0,   0,   0,
-+      8,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      0,   0,   0,   0,   0,   0,
-+      2,   0,   0,   0
-+};
+diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
+index ec0df7c..7c7e83c 100644
+--- a/src/graphics/shared_memory.cpp
++++ b/src/graphics/shared_memory.cpp
+@@ -12,6 +12,7 @@
+ #include <algorithm>
+ #include <cstring>
+ #include <utility>
++#include "@COSMIC_CONSUMER@/shared_memory_audit.h"
+ 
+ #include <rex/assert.h>
+ #include <rex/bit.h>
+@@ -338,7 +339,9 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
+ }
+ 
+ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, size_t count) {
++  ben10_shared_audit::Request audit(count);
+   if (ranges == nullptr || !count) {
++    audit.succeeded=true;
+     return true;
+   }
+ 
+@@ -357,6 +360,7 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+     merged_ranges.emplace_back(start, length);
+   }
+   if (merged_ranges.empty()) {
++    audit.succeeded=true;
+     return true;
+   }
+ 
+@@ -383,12 +387,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+   }
+   merged_ranges.resize(merged_write + 1);
+ 
++  audit.Mark(ben10_shared_audit::Allocation);
+   for (const std::pair<uint32_t, uint32_t>& range : merged_ranges) {
++    if(audit.enabled)ben10_shared_audit::totals.requested_bytes+=range.second;
+     if (!EnsureHostGpuMemoryAllocated(range.first, range.second)) {
+       return false;
+     }
+   }
+ 
++  audit.Mark(ben10_shared_audit::ScanSetup);
+   upload_ranges_.clear();
+   auto append_upload_range = [this](uint32_t page_start, uint32_t page_count) {
+     if (!page_count) {
+@@ -404,12 +411,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+     upload_ranges_.emplace_back(page_start, page_count);
+   };
+   {
++    audit.Mark(ben10_shared_audit::LockWait);
+     auto global_lock = global_critical_region_.Acquire();
++    audit.Mark(ben10_shared_audit::PageScan);
+     for (const std::pair<uint32_t, uint32_t>& range : merged_ranges) {
+       uint32_t page_first = range.first >> page_size_log2_;
+       uint32_t page_last = (range.first + range.second - 1) >> page_size_log2_;
+       uint32_t block_first = page_first >> 6;
+       uint32_t block_last = page_last >> 6;
++      if(audit.enabled)ben10_shared_audit::totals.scanned_blocks+=block_last-block_first+1;
+       uint32_t range_start = UINT32_MAX;
+       for (uint32_t i = block_first; i <= block_last; ++i) {
+         uint64_t block_valid = system_page_flags_valid_[i];
+@@ -455,6 +465,8 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+     }
+   }
+ 
++  audit.Mark(ben10_shared_audit::Finish);
++  if(audit.enabled)ben10_shared_audit::totals.upload_ranges+=upload_ranges_.size();
+   COUNT_profile_set("gpu/shared_memory/request_ranges_count", uint32_t(count));
+   COUNT_profile_set("gpu/shared_memory/request_ranges_merged_count",
+                     uint32_t(merged_ranges.size()));
+@@ -462,10 +474,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+                     uint32_t(upload_ranges_.size()));
+ 
+   if (upload_ranges_.empty()) {
++    audit.succeeded=true;
++    if(audit.enabled)++ben10_shared_audit::totals.valid_without_upload;
+     return true;
+   }
+ 
+-  return UploadRanges(upload_ranges_);
++  audit.Mark(ben10_shared_audit::UploadInclusive);
++  const bool uploaded=UploadRanges(upload_ranges_);
++  audit.succeeded=uploaded;
++  return uploaded;
+ }
+ 
+ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
 diff --git a/src/system/function_dispatcher.cpp b/src/system/function_dispatcher.cpp
-index bd43109..cdb01b8 100644
+index bd43109..f0ae5a5 100644
 --- a/src/system/function_dispatcher.cpp
 +++ b/src/system/function_dispatcher.cpp
 @@ -22,6 +22,7 @@
@@ -4045,7 +2582,7 @@ index bd43109..cdb01b8 100644
              ctx.last_indirect_target);
  }
 diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
-index 306118e..3175edb 100644
+index 306118e..85b59c9 100644
 --- a/src/ui/d3d12/d3d12_presenter.cpp
 +++ b/src/ui/d3d12/d3d12_presenter.cpp
 @@ -14,6 +14,7 @@
@@ -4207,9 +2744,11 @@ index 2251429..fa90fee 100644
 +  return 1;
 +}
 diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..99c78f3 100644
 --- a/thirdparty/CMakeLists.txt
 +++ b/thirdparty/CMakeLists.txt
-@@ -126,7 +126,8 @@ target_compile_options(aes128 PRIVATE -w)
+@@ -125,8 +125,9 @@ target_include_directories(aes128 PUBLIC
+ target_compile_options(aes128 PRIVATE -w)
  
  # libmspack - LZX decompression (only lzxd.c needed for XEX decompression)
 -# Uses cabextract version which has all needed headers in one place
