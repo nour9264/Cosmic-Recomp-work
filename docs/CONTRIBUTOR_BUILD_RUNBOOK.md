@@ -75,6 +75,14 @@ The helper checks applicability and relocates consumer includes. If the patch
 check fails, inspect the SDK revision and diff. It may already be applied.
 Never force it, silently discard changes, or repeatedly apply it.
 
+On Windows with `core.symlinks=false`, Git checks out libmspack's
+`cabextract/mspack` links as text containing their target paths. The consolidated
+SDK patch selects the actual `libmspack/libmspack/mspack` source directory instead.
+This preserves the pinned library's implementation without requiring Windows
+symlink privileges. The previously failing `mspack` Release target compiled and
+linked locally with Clang 23.1.4 after this change; that focused result does not
+establish a complete SDK, consumer or gameplay build.
+
 ```powershell
 Push-Location third_party/rexglue-sdk
 cmake --preset win-amd64 "-DCMAKE_INSTALL_PREFIX=$root/toolchain/rexglue-sdk"
