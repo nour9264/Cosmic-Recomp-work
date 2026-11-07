@@ -64,6 +64,7 @@ class VM:
                 function=read(a);arguments=tuple(read(b+i) for i in range(d))
                 r[words[pc+1]]=function(*arguments) if callable(function) else self.run(function,arguments)
             elif kind==0x21:return None
+            elif kind==0x22:return read(a)
             else:raise AssertionError('Unmodeled authored opcode '+hex(kind))
             pc+=advance
     def slots(self):return [self.globals[crc('gFormHotKey')][i][crc('formID')] for i in range(1,5)]

@@ -16,6 +16,7 @@
 #include "pc_video_menu.h"
 #include "all_aliens_paging.h"
 #include "performance_visibility.h"
+#include "discord_presence.h"
 #include <vector>
 #include <mutex>
 #include <rex/input/input_system.h>
@@ -127,6 +128,11 @@ inline void ReturnVoid(PPCContext& ctx,uint8_t* base) {
     uint32_t empty=0;
     std::memcpy(base+0x826F8718+ctx.r4.u32*8,&empty,sizeof(empty));
   }
+}
+template<int Level> void PresenceLevel(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  const char* levels[]={"menus","l_chin","l_mili","l_pari","l_romd","l_romn","l_rush","l_tokd","l_tokn"};
+  ben10_presence::Publish(levels[Level]);
 }
 inline void QuitToLauncher(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("Cosmic PC menu: QUIT TO LAUNCHER selected");
@@ -332,6 +338,17 @@ inline void OnFrame() {
       if(line=="hero_time=off")hero_time_enabled=false;
     }}
   add("cosmic_all_aliens_page",AllAliensPage);
+  if(std::getenv("BEN10_DISCORD_STATUS_FILE")) {
+    add("cosmic_presence_menus",PresenceLevel<0>);
+    add("cosmic_presence_l_chin",PresenceLevel<1>);
+    add("cosmic_presence_l_mili",PresenceLevel<2>);
+    add("cosmic_presence_l_pari",PresenceLevel<3>);
+    add("cosmic_presence_l_romd",PresenceLevel<4>);
+    add("cosmic_presence_l_romn",PresenceLevel<5>);
+    add("cosmic_presence_l_rush",PresenceLevel<6>);
+    add("cosmic_presence_l_tokd",PresenceLevel<7>);
+    add("cosmic_presence_l_tokn",PresenceLevel<8>);
+  }
   add("cosmic_toggle_all_aliens",ToggleAllAliens);
   add("cosmic_all_aliens_enabled",AllAliensEnabled);
   add("cosmic_all_aliens_trace",AllAliensTrace);

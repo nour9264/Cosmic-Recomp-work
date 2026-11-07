@@ -19,7 +19,7 @@ OWNS_GATE = 'cosmic_hero_owns_mission_gate'
 COOLDOWN = 'cosmic_hero_recharge_duration'
 
 
-def authored():
+def authored(ultimate_voices=False, discord_presence=False):
     c = Code()
     c.nil(0); c.put(0, TARGET)
     c.native('cosmic_hero_enabled', 0)
@@ -52,7 +52,9 @@ def authored():
         c.label('activation_clear_' + str(flag))
     c.num(0, 2); c.put(0, PHASE)
     c.num(0, ACTIVE_SECONDS); c.put(0, REMAINING)
-    c.native('cosmic_hero_active'); c.jump('end')
+    c.native('cosmic_hero_active')
+    if ultimate_voices:c.call('CosmicHeroCallout')
+    c.jump('end')
 
     c.label('returning'); c.num(1, 3); c.binary(0x10, 2, 0, 1)
     c.false(2, 'timed')
@@ -97,6 +99,8 @@ def authored():
     c.get(0, TARGET); c.false(0, 'end')
     c.get(1, 'gCurrentCharacter'); c.put(1, 0xf495406a)
     c.num(1, 1); c.put(1, PHASE)
+    if ultimate_voices:
+        c.boolean(2,False);c.put(2,'cosmic_hero_voice_observed')
     c.call('switch_to_ultimate')
     c.call('CosmicHeroFlash')
     c.label('end'); c.done()
@@ -254,6 +258,13 @@ def authored():
     c.num(0, 0); c.put(0, PHASE)
     c.done()
     result.append((crc('CosmicHeroUnload'), 0, c.finish()))
+    if ultimate_voices:
+        from ultimate_voice_program import hero_functions
+        result.extend(hero_functions())
+    if discord_presence:
+        for level in ['menus','l_chin','l_mili','l_pari','l_romd','l_romn','l_rush','l_tokd','l_tokn']:
+            c=Code();c.native('cosmic_presence_'+level);c.done()
+            result.append((crc('CosmicPresence_'+level),0,c.finish()))
     return result
 
 

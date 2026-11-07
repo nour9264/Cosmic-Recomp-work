@@ -26,7 +26,7 @@ namespace CosmicRecompi {
         static void Word(Stream s,uint v){s.WriteByte((byte)(v>>24));s.WriteByte((byte)(v>>16));s.WriteByte((byte)(v>>8));s.WriteByte((byte)v);}
         static byte[] Bytes(IEnumerable<uint> words){using(var s=new MemoryStream()){foreach(uint w in words)Word(s,w);return s.ToArray();}}
         sealed class Record {public uint Id,Args;public byte[] Code;}
-        static List<Record> Parse(byte[] b) {
+        static List<Record> Parse(byte[] b,bool preserveDuplicateIds=false) {
             if(Read(b,0)!=0x1badbabe)throw new InvalidDataException("Invalid script signature.");
             var rows=new List<Record>();int p=8;uint count=Read(b,4);
             if(count>4096)throw new InvalidDataException("Unexpected script record count.");
@@ -34,7 +34,7 @@ namespace CosmicRecompi {
             for(int i=0;i<count;i++) {
                 var row=new Record {Id=Read(b,p),Args=Read(b,p+4)};
                 int n=checked((int)Read(b,p+8)*4);p+=12;
-                if(n>b.Length-p || !ids.Add(row.Id))throw new InvalidDataException("Invalid script record.");
+                if(n>b.Length-p || (!ids.Add(row.Id) && !preserveDuplicateIds))throw new InvalidDataException("Invalid script record.");
                 row.Code=new byte[n];Buffer.BlockCopy(b,p,row.Code,0,n);p+=n;rows.Add(row);
             }
             if(p!=b.Length)throw new InvalidDataException("Trailing script bytes.");return rows;
@@ -172,6 +172,33 @@ namespace CosmicRecompi {
                 Word(s,Crc("cosmic_all_aliens_label"));Word(s,(uint)label.Length);s.Write(label,0,label.Length);return s.ToArray();
             }
         }
+#if COSMIC_ULTIMATE_VOICES
+        internal static byte[] VoiceResolver(byte[] original) {
+            var rows=Parse(original);int found=0;uint saved=Crc("CosmicOriginalUltimateVoiceResolver");
+            foreach(var row in rows) {
+                if(row.Id==saved)throw new InvalidDataException("Voice resolver already wrapped.");
+                if(row.Id==0xe8c0396d){if(row.Args!=2)throw new InvalidDataException("Unexpected voice resolver arguments.");row.Id=saved;found++;}
+            }
+            if(found!=1)throw new InvalidDataException("Original voice resolver missing.");
+            using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("CosmicUltimateVoiceResolver.bin")) {
+                if(stream==null)throw new InvalidDataException("Voice resolver resource missing.");
+                using(var memory=new MemoryStream()){stream.CopyTo(memory);rows.AddRange(Parse(memory.ToArray()));}
+            }
+            return Pack(rows);
+        }
+#endif
+#if COSMIC_DISCORD_PRESENCE
+        internal static byte[] PresenceMission(byte[] original,string level) {
+            // The hash-pinned l_rush script contains an unrelated duplicate ID.
+            // Preserve all records in order; still require our entry exactly once.
+            var rows=Parse(original,true);uint entry=DiscordPresencePatch.Entries[level];int found=0;
+            foreach(var row in rows)if(row.Id==entry) {
+                if(row.Args!=1)throw new InvalidDataException("Unexpected mission entry arguments.");
+                row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{0,Hook("CosmicPresence_"+level)}});found++;
+            }
+            if(found!=1)throw new InvalidDataException("Mission entry missing.");return Pack(rows);
+        }
+#endif
         public static byte[] Transform(string file,byte[] original) {
 #if COSMIC_HERO_TIME
             // Private candidate only. Compose at original VM boundaries before
@@ -179,6 +206,18 @@ namespace CosmicRecompi {
             if(file=="globals.ds") {
                 var heroRows=Parse(original);int heroHooks=0;
                 foreach(var row in heroRows) {
+#if COSMIC_DISCORD_PRESENCE
+                    if(row.Id==Crc("global_mission_unload"))row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{0,Hook("CosmicPresence_menus")}});
+#endif
+#if COSMIC_ULTIMATE_VOICES
+                    // Mark existing calls only when Hero Time owns the request.
+                    if(row.Id==0xd322606e || row.Id==0xd12b0644 || row.Id==0x29a1fb23) {
+                        int boundary=row.Id==0x29a1fb23?89:84;
+                        if(Read(row.Code,(boundary-4)*4)!=0x00000617 || Read(row.Code,(boundary-3)*4)!=Crc("playvo") || Read(row.Code,(boundary-2)*4)!=0x04090020)
+                            throw new InvalidDataException("Unexpected original Ultimate voice call.");
+                        row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{boundary,Hook("CosmicHeroObserveVoice")}});
+                    }
+#endif
                     if(row.Id==Crc("switch_form_update")){row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{34,Hook("CosmicHeroUpdate")}});heroHooks++;}
                     if(row.Id==Crc("destroy_form_switching")){row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{0,Hook("CosmicHeroUnload")}});heroHooks++;}
                     if(row.Id==0xaac6a726){row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{87,Hook("CosmicHeroLoad")}});heroHooks++;}
@@ -288,7 +327,14 @@ namespace CosmicRecompi {
                 if(Hash(original)!=hashes[i])throw new InvalidDataException("Unsupported original form script: "+names[i]);
                 byte[] updated=Transform(names[i],original),current=File.ReadAllBytes(path);
                 if(Hash(current)==Hash(updated))continue;
-                if(Hash(current)!=hashes[i])throw new IOException("Another version modified "+names[i]+". Import into a fresh folder.");
+                if(Hash(current)!=hashes[i]
+#if COSMIC_ULTIMATE_VOICES
+                    && !(names[i]=="globals.ds" && Hash(current)=="1c99d65b77ad414fc64fa2c890d458d0870753ec338258ecedf21bfbff00ca55")
+#endif
+#if COSMIC_DISCORD_PRESENCE
+                    && !(names[i]=="globals.ds" && Hash(current)=="60490e513f99dd2ecdfaa27c02ef9c98ba0f8f3b0574e0d3436a9458bbc82e36")
+#endif
+                )throw new IOException("Another version modified "+names[i]+". Import into a fresh folder.");
                 replacements[path]=updated;originals[path]=original;
             }
             foreach(var item in replacements) {

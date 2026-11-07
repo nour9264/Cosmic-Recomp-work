@@ -54,6 +54,9 @@ namespace CosmicRecompi {
             }
         }
         internal static void Play(Action<System.Diagnostics.ProcessStartInfo> configureProcess = null, Action<System.Diagnostics.Process> onLauncherOpened = null) {
+#if COSMIC_DISCORD_PRESENCE
+                        string presenceFile=Path.Combine(InstalledGame.Installation(Root),"logs","discord-state-"+Guid.NewGuid().ToString("N")+".txt");
+#endif
                         Status("Verifying game files…");
                         string menuApi=Path.Combine(Root,"runtime","pc-menu-api.txt");
 #if COSMIC_NATIVE_SETTINGS
@@ -75,14 +78,31 @@ namespace CosmicRecompi {
                             string patch=Path.Combine(installation,"patches","translation","xbx_us.txt");
                             GameMenuPatch.Ensure(Path.Combine(installation,"game"),File.Exists(patch)?File.ReadAllBytes(patch):null);
                             AllAliensPatch.Ensure(Path.Combine(installation,"game"));
+#if COSMIC_ULTIMATE_VOICES
+                            UltimateVoicePatch.Ensure(Path.Combine(installation,"game"));
+                            UltimateVoiceLinks.Ensure(Path.Combine(installation,"game"));
+                            File.AppendAllText(InstalledGame.LauncherLog(Root),DateTime.UtcNow.ToString("o")+" Ultimate voice candidate: v2 fixed callout slots, descriptor links and mission resolvers ready."+Environment.NewLine);
+#endif
+#if COSMIC_DISCORD_PRESENCE
+                            DiscordPresencePatch.Ensure(Path.Combine(installation,"game"));
+#endif
                         }, delegate(System.Diagnostics.ProcessStartInfo start) {
+#if COSMIC_DISCORD_PRESENCE
+                            start.EnvironmentVariables["BEN10_DISCORD_STATUS_FILE"]=presenceFile;
+#endif
 #if COSMIC_NATIVE_SETTINGS
                             start.EnvironmentVariables["BEN10_RESET_PROGRESS_EVENT"]=resetName;
 #endif
                             if(configureProcess!=null)configureProcess(start);
                         })) {
+#if COSMIC_DISCORD_PRESENCE
+                            using(var presence=new DiscordPresence(game,presenceFile,InstalledGame.LauncherLog(Root))) {
+#endif
                             Status("Game is running."); game.WaitForExit();
                             if (game.ExitCode != 0 && !returnEvent.WaitOne(0)) throw new IOException("The game exited with an error. Check the installation logs.");
+#if COSMIC_DISCORD_PRESENCE
+                            }
+#endif
                         }
                         returnRequested = returnEvent.WaitOne(0);
                         }
