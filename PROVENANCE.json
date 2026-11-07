@@ -410,5 +410,32 @@
     "packaging_rebuild_gameplay_tested": false,
     "universal_flicker_fix_proven": false,
     "full_campaign_verified": false
+  },
+  "community_alpha6": {
+    "status": "Source update; installer packaging pending",
+    "inherits_performance_profile": "measure-no-reuse",
+    "bridge_flags": [
+      "--hero-time",
+      "--gpu-diagnostics",
+      "--performance-alpha5",
+      "--ultimate-voices",
+      "--discord-presence"
+    ],
+    "features": [
+      "Ultimate transformation name callouts",
+      "Discord Rich Presence with original level previews and session timer"
+    ],
+    "discord_application_id": "1568421826894500000",
+    "validation": {
+      "local_player_report": "Successful voice and Discord feature tests",
+      "audio_preservation_and_callout_vm_checks": true,
+      "discord_private_ipc_checks": true,
+      "eight_original_preview_mappings_verified": true,
+      "full_campaign_verified": false,
+      "all_level_thumbnails_visually_tested_in_discord": false,
+      "fresh_machine_rebuild_verified": false,
+      "alpha6_installer_published": false
+    },
+    "original_audio_images_generated_title_cpp_saves_logs_excluded": true
   }
 }

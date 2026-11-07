@@ -3,6 +3,40 @@
 <a id="english"></a>
 # Cosmic Recomp
 
+## Alpha 6 - Ultimate Voices & Discord Rich Presence
+
+**New source update; Alpha 6 installer packaging is pending.**
+The current downloadable release remains [Alpha 5](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5).
+
+- **Ultimate transformation voice lines:** repaired Hero Time name callouts for
+  all five supported Ultimates using their original recordings. The integration
+  aligns voice-bank indices and event resolvers, adds a missing callout after
+  confirmed activation, and avoids duplicating existing playvo requests.
+- **Discord Rich Presence:** game cover, a small original Level Select preview,
+  current level name and elapsed session time. Mission changes update the level
+  without resetting the timer; Discord being unavailable does not block play.
+
+Local player testing reported successful results. Original sound preservation,
+voice-event mapping, duplicate suppression, Discord IPC and all eight level-image
+mappings passed focused checks. Full campaign and clean-machine validation remain
+open. The tested Alpha 5 performance configuration is retained.
+
+[Alpha 6 update notes](docs/ALPHA6_UPDATE.md) ·
+[Voice repair details](docs/ULTIMATE_VOICE_DIAGNOSTICS.md) ·
+[Discord integration and original preview mappings](docs/DISCORD_RICH_PRESENCE.md)
+
+For this combined configuration, build the matching current native game and use:
+
+```powershell
+python tools/build_release_bridge.py --hero-time --gpu-diagnostics --performance-alpha5 --ultimate-voices --discord-presence
+```
+
+The feature flags are explicit; ordinary unqualified bridge builds retain their
+previous defaults. Rebuilding only the bridge cannot add Discord's new native
+mission callbacks. Players do not need a Discord Developer Portal application.
+Original recordings and extracted preview PNGs remain outside Git.
+
+
 **Community work — Alpha 5:** see the
 [local performance investigation and reproduction steps](docs/PERFORMANCE_ALPHA5.md).
 The community Alpha 5 bridge automatically selects the tested performance path.
@@ -36,7 +70,7 @@ The ordinary bridge without this Alpha 5 flag retains its previous defaults.
 
 ## Community EXE release
 
-**Cosmic Recomp — Alpha 5** is a community pre-release distributed as one installer:
+**Cosmic Recomp — Alpha 5** is a community release distributed as one installer:
 
 ```text
 CosmicRecomp-Alpha5-win64.exe

@@ -1,5 +1,11 @@
 # Continue this project instead of starting over
 
+Community fork continuation: read [Alpha 6 source update](ALPHA6_UPDATE.md),
+[Ultimate voice repair](ULTIMATE_VOICE_DIAGNOSTICS.md) and
+[Discord integration](DISCORD_RICH_PRESENCE.md) for the local additions built on
+Alpha 5. The upstream baseline and historical validation limits below remain
+applicable in their stated scope. The Alpha 6 installer is not published yet.
+
 This document is the handoff for a contributor's coding agent. The authoritative
 public baseline is Alpha 4, with All Aliens and Hero Time. GPU test 4 is a
 diagnostic derivative; it does not establish a performance fix.
@@ -16,7 +22,7 @@ diagnostic derivative; it does not establish a performance fix.
 | Native GPU/runtime changes | `sdk-patches/rex-sdk-local.diff` against the pinned SDK |
 | Saves, reset and translation import | `launcher/SaveReset.cs`, bridge/menu sources |
 
-All Aliens and Hero Time default to **OFF**. Look under **Options → Gameplay →
+All Aliens and Hero Time default to **OFF**. Look under **Options â†’ Gameplay â†’
 Extras** to enable them. Hold LT and tap RT for alien pages; Hero Time uses a
 compatible normal alien followed by L3 / F. Ultimate duration is up to 60 seconds,
 with proportional recharge as Ben (used time / 3, maximum 20 seconds). Four Arms
@@ -33,7 +39,7 @@ to replace existing features with fresh SDK boilerplate.
    do not reset or overwrite a contributor's work. A fork must explicitly fetch
    `https://github.com/ExtremestoneGG/Cosmic-Recompi.git`; downloading a release
    installer does not update a fork's sources. Read `AGENTS.md`.
-2. Follow `CONTRIBUTOR_BUILD_RUNBOOK.md` sections 2–4: x64 developer terminal,
+2. Follow `CONTRIBUTOR_BUILD_RUNBOOK.md` sections 2â€“4: x64 developer terminal,
    tools, SDK commit `c94f5ebdcb3c9d1a460ca48e04f9758448f8d518`, consolidated patch,
    Release SDK installation and your own supported ISO extracted to `originals`.
    Pin `ExtremestoneGG/recomp-ui` to
