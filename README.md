@@ -5,8 +5,8 @@
 
 ## Alpha 6 - Ultimate Voices & Discord Rich Presence
 
-**New source update; Alpha 6 installer packaging is pending.**
-The current downloadable release remains [Alpha 5](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5).
+**Community Alpha 6:** [Download the installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.6).
+The previous [Alpha 5 release](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5) remains available.
 
 - **Ultimate transformation voice lines:** repaired Hero Time name callouts for
   all five supported Ultimates using their original recordings. The integration

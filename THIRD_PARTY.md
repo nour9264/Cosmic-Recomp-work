@@ -4,9 +4,9 @@
 
 # Third-party components and licenses
 
-Alpha 5 community release: the corresponding sources for this build are in
-`CosmicRecomp-Alpha5-corresponding-source.zip` attached to the same release.
-This supersedes the historical archive names below for rebuilding Alpha 5.
+Alpha 6 community release: the corresponding sources for this build are in
+`CosmicRecomp-Alpha6-corresponding-source.zip` attached to the same release.
+This supersedes the historical archive names below for rebuilding Alpha 6.
 The installer includes dependency notices under `licenses/`.
 
 The standalone frontend reuses Dear ImGui and the GIF loader from [Full Emerald's recomp-ui fork](https://github.com/ExtremestoneGG/recomp-ui), revision `047bc82d8679e96d1dec19ce2cd8ab677003465f`. Preserve its MIT notice (Matthew Stanley), Dear ImGui's MIT notice and stb's MIT/public-domain terms. Its separately compiled SDL3 uses the zlib license. No Full Emerald game assets are included. Windows' installed Segoe UI font is read at runtime and is not redistributed.

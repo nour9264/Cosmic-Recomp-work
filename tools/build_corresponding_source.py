@@ -72,7 +72,7 @@ for p in (root/'rexglue-sdk').rglob('*'):
         if b'@COSMIC_CONSUMER@' in data:p.write_bytes(data.replace(b'@COSMIC_CONSUMER@',consumer))
 print('SDK include paths relocated. The SDK patch is already applied.')
 ''')
-        archive.writestr('README-SOURCE.txt', '''Cosmic Recomp Alpha 5 corresponding source
+        archive.writestr('README-SOURCE.txt', '''Cosmic Recomp corresponding source
 
 Run python prepare_sdk_source.py first. The rexglue-sdk tree already contains
 the consolidated project patch: do not apply it a second time.
@@ -80,8 +80,8 @@ Follow consumer/docs/CONTRIBUTOR_BUILD_RUNBOOK.md section 3B, building the SDK
 from the sibling rexglue-sdk folder and installing to consumer/toolchain/rexglue-sdk.
 The pinned UI source is in sibling recomp-ui; copy it to consumer/third_party/full-emerald-ui.
 Game input and generated title C++ are intentionally absent; provide your own ISO.
-After generating/integrating/building, build the Alpha 5 bridge explicitly:
-python tools/build_release_bridge.py --hero-time --gpu-diagnostics --performance-alpha5
+After generating/integrating/building, build the combined Alpha 6 bridge explicitly:
+python tools/build_release_bridge.py --hero-time --gpu-diagnostics --performance-alpha5 --ultimate-voices --discord-presence
 This selects the tested no-reuse path even if an older diagnostic profile exists.
 The ordinary non-Alpha-5 bridge retains the upstream defaults.
 Source-path privacy mappings used for release binaries:

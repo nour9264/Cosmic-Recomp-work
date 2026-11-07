@@ -4,7 +4,7 @@ Community fork continuation: read [Alpha 6 source update](ALPHA6_UPDATE.md),
 [Ultimate voice repair](ULTIMATE_VOICE_DIAGNOSTICS.md) and
 [Discord integration](DISCORD_RICH_PRESENCE.md) for the local additions built on
 Alpha 5. The upstream baseline and historical validation limits below remain
-applicable in their stated scope. The Alpha 6 installer is not published yet.
+applicable in their stated scope. For Alpha 6 installer checks, consult the validation asset on its release page.
 
 This document is the handoff for a contributor's coding agent. The authoritative
 public baseline is Alpha 4, with All Aliens and Hero Time. GPU test 4 is a

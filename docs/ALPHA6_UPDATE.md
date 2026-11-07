@@ -1,7 +1,7 @@
 # Cosmic Recomp - Alpha 6: Ultimate Voices & Discord Rich Presence
 
-Community source update building on Alpha 5. The Alpha 6 installer has not yet
-been packaged or published; the current downloadable release remains Alpha 5.
+Community release building on Alpha 5. Download the installer and its validation
+assets from this repository's Alpha 6 release page.
 
 ## Fixed: Ultimate transformation voice lines
 
@@ -41,3 +41,33 @@ from the repository. Original port by ExtremestoneGG, based on ReXGlue SDK.
 
 Technical details: [Ultimate voices](ULTIMATE_VOICE_DIAGNOSTICS.md) and
 [Discord integration](DISCORD_RICH_PRESENCE.md).
+
+## Download and installation
+
+1. Download **CosmicRecomp-Alpha6-win64.exe** from Assets below.
+2. Run it and select a writable installation folder.
+3. In the launcher, choose **Select ISO**, wait for validation, then **Prepare game**.
+4. Select **Play**. Existing prepared installations do not need to import the
+   same ISO again. Preserve your user/save folder when updating.
+
+The installer contains the launcher, matching precompiled native runtime,
+bridge, dependencies and licenses. Original audio and scripts are prepared
+locally from your own supported game copy. It includes no ISO, original assets,
+personal saves, development logs or personal installation paths.
+
+For Rich Presence, keep the desktop Discord client running with activity
+sharing enabled. The project application supplies the game-cover and level
+artwork; players need no tokens, developer account or manual asset setup.
+
+## Release assets
+
+- CosmicRecomp-Alpha6-win64.exe: portable selected-folder installer.
+- CosmicRecomp-Alpha6-SHA256SUMS.txt: download checksums.
+- CosmicRecomp-Alpha6-VALIDATION.json: packaging checks and validation limits.
+- CosmicRecomp-Alpha6-corresponding-source.zip: matching consumer, patched SDK
+  and dependency source snapshot, without original game inputs.
+
+Selected-folder extraction, update preservation and package integrity are
+checked separately from gameplay. Read the attached validation record for the
+exact checks performed. The final packaging rebuild is not a new full-campaign
+or clean-machine gameplay certification.
