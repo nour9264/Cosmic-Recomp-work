@@ -3,6 +3,17 @@
 <a id="english"></a>
 # Cosmic Recomp
 
+## Alpha 7 - Four Arms, Albedo Mode & Launcher Improvements
+
+Alpha 7 is in local testing. The public installer is currently Alpha 6.
+
+- **Four Arms:** a separate playable form alongside Rath. The local build adds him to All Aliens, the R3 selection wheel and the Upgrades wheel. Enter `classic` to unlock him.
+- **Optional PS3 import:** Alpha 7 targets the extracted European PS3 `PS3_GAME` folder (`BLES01110`) for Four Arms. The Xbox 360 ISO is still the base game input. The standalone installer's import flow is pending.
+- **Play as Albedo:** an Extras toggle with an alternate character look, red Omnitrix details, menu and HUD accents, and a red-and-white transformation flash.
+- **Launcher and startup:** redesigned launcher and settings screens, an optional Skip Intro setting, and a fixed Quit to Launcher action in the pause menu.
+- **Ultimate Omnitrix:** restored the red and yellow HUD accents during Ultimate transformations.
+- **Performance:** carries forward the Alpha 5 frame pacing fix, tested locally at 30 and 60 FPS.
+
 ## Alpha 6 - Ultimate Voices & Discord Rich Presence
 
 **Community Alpha 6:** [Download the installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.6).
@@ -186,11 +197,22 @@ ReXGlue supplies the kernel, GPU translation and audio. This project does not re
 <a id="portugues"></a>
 # Português (Brasil)
 
+## Alpha 7 - Four Arms, modo Albedo e melhorias no launcher
+
+A Alpha 7 está em testes locais. O instalador público atual é o da Alpha 6.
+
+- **Four Arms:** forma jogável separada de Rath, com espaço no All Aliens, na roda de seleção do R3 e na roda de melhorias da versão local. Use o código `classic` para desbloqueá-lo.
+- **Importação opcional do PS3:** a Alpha 7 usa a pasta extraída `PS3_GAME` da edição europeia (`BLES01110`) para o Four Arms. A ISO do Xbox 360 continua sendo a base do jogo. A importação no instalador independente ainda está pendente.
+- **Modo Albedo:** opção em Extras que altera o visual do personagem, os detalhes do Omnitrix, os elementos da interface e o clarão da transformação, que fica branco e vermelho.
+- **Launcher e inicialização:** interface e tela de configurações redesenhadas, opção de pular a introdução e correção do comando Quit to Launcher no menu de pausa.
+- **Omnitrix Supremo:** restaura os detalhes vermelhos e amarelos da interface durante as transformações Supremas.
+- **Desempenho:** mantém a correção de cadência da Alpha 5, testada localmente a 30 e 60 FPS.
+
 Port nativo experimental para Windows 10/11 x64 de **Ben 10 Ultimate Alien: Cosmic Destruction**, baseado no ReXGlue v0.10.0 e Direct3D 12. **Você precisa fornecer sua própria cópia compatível.** Nenhum dado original, código gerado do jogo ou save pessoal é distribuído.
 
 Esta versão corrige recursos de animação ausentes no All Aliens e acrescenta opções nos menus do próprio jogo: resolução de saída, 30/60/Unlimited, modo de tela e **Show FPS**, que mostra ou esconde juntos o contador e o gráfico de frametime. O launcher controla os mesmos valores. A resolução de saída muda sem reiniciar em janela e nos modos exclusivos compatíveis; borderless acompanha o desktop. Isso não significa aumento da resolução interna.
 
-O All Aliens começa desligado. Segure LT e toque RT para trocar páginas; habilidades por RT ficam bloqueadas enquanto LT estiver segurado. As onze formas comuns, incluindo Rath, foram verificadas na cena de Paris. O progresso normal e o cheat do Rath são preservados. Quatro Braços não está incluído.
+O All Aliens começa desligado. Segure LT e toque RT para trocar páginas; habilidades por RT ficam bloqueadas enquanto LT estiver segurado. As onze formas comuns, incluindo Rath, foram verificadas na cena de Paris. O progresso normal e o cheat do Rath são preservados. O Four Arms faz parte da versão local da Alpha 7 descrita acima.
 
 Wipe Data pede confirmação, fecha o jogo, guarda os dados deste título em `game-data/save-backups` e retorna ao launcher. As configurações nativas de vídeo são preservadas. Mantenha `game-data/user` ao atualizar. Logs ficam em `game-data/logs`.
 
