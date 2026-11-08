@@ -5,10 +5,10 @@
 
 ## Alpha 7 - Four Arms, Albedo Mode & Launcher Improvements
 
-Alpha 7 is in local testing. The public installer is currently Alpha 6.
+**Community Alpha 7:** [Download the Windows installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.7).
 
 - **Four Arms:** a separate playable form alongside Rath. The local build adds him to All Aliens, the R3 selection wheel and the Upgrades wheel. Enter `classic` to unlock him.
-- **Optional PS3 import:** Alpha 7 targets the extracted European PS3 `PS3_GAME` folder (`BLES01110`) for Four Arms. The Xbox 360 ISO is still the base game input. The standalone installer's import flow is pending.
+- **Optional PS3 import:** Alpha 7 targets the extracted European PS3 `PS3_GAME` folder (`BLES01110`) for Four Arms. The Xbox 360 ISO is still the base game input. Use **Import Four Arms** in the launcher's Setup tab.
 - **Play as Albedo:** an Extras toggle with an alternate character look, red Omnitrix details, menu and HUD accents, and a red-and-white transformation flash.
 - **Launcher and startup:** redesigned launcher and settings screens, an optional Skip Intro setting, and a fixed Quit to Launcher action in the pause menu.
 - **Ultimate Omnitrix:** restored the red and yellow HUD accents during Ultimate transformations.
@@ -199,10 +199,10 @@ ReXGlue supplies the kernel, GPU translation and audio. This project does not re
 
 ## Alpha 7 - Four Arms, modo Albedo e melhorias no launcher
 
-A Alpha 7 está em testes locais. O instalador público atual é o da Alpha 6.
+**Alpha 7 da comunidade:** [Baixe o instalador para Windows e veja as notas da versão](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.7).
 
 - **Four Arms:** forma jogável separada de Rath, com espaço no All Aliens, na roda de seleção do R3 e na roda de melhorias da versão local. Use o código `classic` para desbloqueá-lo.
-- **Importação opcional do PS3:** a Alpha 7 usa a pasta extraída `PS3_GAME` da edição europeia (`BLES01110`) para o Four Arms. A ISO do Xbox 360 continua sendo a base do jogo. A importação no instalador independente ainda está pendente.
+- **Importação opcional do PS3:** a Alpha 7 usa a pasta extraída `PS3_GAME` da edição europeia (`BLES01110`) para o Four Arms. A ISO do Xbox 360 continua sendo a base do jogo. Use **Import Four Arms** na aba Setup do launcher.
 - **Modo Albedo:** opção em Extras que altera o visual do personagem, os detalhes do Omnitrix, os elementos da interface e o clarão da transformação, que fica branco e vermelho.
 - **Launcher e inicialização:** interface e tela de configurações redesenhadas, opção de pular a introdução e correção do comando Quit to Launcher no menu de pausa.
 - **Omnitrix Supremo:** restaura os detalhes vermelhos e amarelos da interface durante as transformações Supremas.
