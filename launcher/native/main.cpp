@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <vector>
 #include <charconv>
+#include "../cosmic_window_icon.h"
 
 namespace fs = std::filesystem;
 static fs::path root;
@@ -89,6 +90,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) { MessageBoxA(nullptr, SDL_GetError(), "Cosmic Recomp", MB_ICONERROR); CloseHandle(instance); return 1; }
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_Window* window = SDL_CreateWindow("Cosmic Recomp", 1100, 840, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (smoke ? SDL_WINDOW_HIDDEN : 0));
+    if (window) {
+        auto properties = SDL_GetWindowProperties(window);
+        SetCosmicWindowIcon(static_cast<HWND>(SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)));
+    }
     if (!window) { MessageBoxA(nullptr, SDL_GetError(), "Cosmic Recomp", MB_ICONERROR); SDL_Quit(); CloseHandle(instance); return 1; }
     SDL_SetWindowMinimumSize(window, 680, 520);
     SDL_Rect usable{};

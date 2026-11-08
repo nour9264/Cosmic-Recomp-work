@@ -49,7 +49,12 @@ class Code:
 BASE='cosmic_alien_base';EXTRA='cosmic_alien_extra';READY='cosmic_alien_ready'
 PENDING='cosmic_alien_pending';PAGE='cosmic_alien_page';ACTIVE='cosmic_alien_active'
 
-def authored(disable_rath=False,preload_resources=False):
+def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
+    if four_arms_probe and (disable_rath or not preload_resources):
+        raise ValueError('Four Arms probe requires the current preload profile')
+    identities=list(range(1,12))
+    if four_arms_probe:identities.append(19)
+    extra_count=len(identities)-4-int(disable_rath)
     result=[]
     def save(name,args,c):c.done();result.append((crc(name),args,c.finish()))
     # Callback follows the original mission loader's completion convention.
@@ -86,18 +91,23 @@ def authored(disable_rath=False,preload_resources=False):
     for i in range(4):
         c.num(1,i+1);c.index(2,0,1);c.field(4+i,2,'formID');c.false(4+i,'end')
         c.num(1,0);c.binary(0x13,2,4+i,1);c.false(2,'end')
-        c.num(1,12);c.binary(0x12,2,4+i,1);c.false(2,'end')
+        c.num(1,12);c.binary(0x12,2,4+i,1)
+        if four_arms_probe:
+            c.false(2,'probe_form'+str(i));c.jump('valid_form'+str(i))
+            c.label('probe_form'+str(i));c.num(1,19);c.binary(0x10,2,4+i,1)
+        c.false(2,'end')
+        if four_arms_probe:c.label('valid_form'+str(i))
         if disable_rath:c.binary(0x11,2,4+i,12);c.false(2,'end')
         for j in range(i):c.binary(0x11,2,4+i,4+j);c.false(2,'end')
     c.table(0);c.put(0,BASE)
     for i in range(4):c.num(1,i+1);c.store(0,1,4+i)
     c.table(0);c.put(0,EXTRA);c.num(8,1)
-    for identity in range(1,12):
+    for identity in identities:
         c.num(1,identity)
         if disable_rath:c.binary(0x11,2,1,12);c.false(2,'skip'+str(identity))
         for i in range(4):c.binary(0x11,2,1,4+i);c.false(2,'skip'+str(identity))
         c.store(0,8,1);c.num(2,1);c.binary(0x0a,8,8,2);c.label('skip'+str(identity))
-    c.num(1,12 if disable_rath else 14);c.put(1,PENDING);c.boolean(1,False);c.put(1,READY)
+    c.num(1,extra_count*2);c.put(1,PENDING);c.boolean(1,False);c.put(1,READY)
     if preload_resources:
         c.get(1,PENDING);c.binary(0x0a,16,16,1);c.put(16,0x1729d192)
     c.boolean(1,True);c.put(1,ACTIVE);c.num(1,0);c.put(1,PAGE)
@@ -106,7 +116,7 @@ def authored(disable_rath=False,preload_resources=False):
         c.jump('end')
     c.get(1,0xf3d407b1);c.method(1,'getcurrentmission',[1],2)
     c.get(3,EXTRA);c.get(4,'gFormData');c.get(5,'CosmicAlienLoaded')
-    for i in range(1,7 if disable_rath else 8):
+    for i in range(1,extra_count+1):
         c.num(6,i);c.index(7,3,6);c.index(8,4,7)
         c.get(9,0x0bfbfd2d);c.field(10,8,'characterFile')
         c.method(2,0xbc35779c,[2,9,10,5])
@@ -115,7 +125,7 @@ def authored(disable_rath=False,preload_resources=False):
     c.label('end');save('CosmicAlienLoad',0,c)
 
     if preload_resources:
-        c=Code();c.get(6,'cosmic_alien_next');c.num(1,8)
+        c=Code();c.get(6,'cosmic_alien_next');c.num(1,extra_count+1)
         c.binary(0x12,2,6,1);c.false(2,'end')
         c.num(1,1);c.binary(0x0a,1,6,1);c.put(1,'cosmic_alien_next')
         c.num(1,2);c.put(1,'cosmic_alien_pair_pending')
@@ -130,7 +140,7 @@ def authored(disable_rath=False,preload_resources=False):
     c=Code();c.get(0,ACTIVE);c.false(0,'end');c.call('CosmicAlienRestore')
     c.get(1,0xf3d407b1);c.method(1,'getcurrentmission',[1],2)
     c.get(3,EXTRA);c.get(4,'gFormData')
-    for i in range(1,7 if disable_rath else 8):
+    for i in range(1,extra_count+1):
         c.num(6,i);c.index(7,3,6);c.index(8,4,7)
         c.get(9,0x93aca275);c.field(10,8,'character')
         c.method(9,'removecharacter',[9,10])

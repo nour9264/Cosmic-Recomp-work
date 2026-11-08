@@ -3,7 +3,10 @@ import argparse,os,subprocess
 from pathlib import Path
 from prepare_all_aliens_candidate import ROOT,authored,encode
 
-parser=argparse.ArgumentParser();parser.add_argument('--rath-disabled',action='store_true');parser.add_argument('--hero-time',action='store_true');parser.add_argument('--gpu-diagnostics',action='store_true');parser.add_argument('--performance-alpha5',action='store_true');parser.add_argument('--ultimate-voices',action='store_true');parser.add_argument('--discord-presence',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--rath-disabled',action='store_true');parser.add_argument('--hero-time',action='store_true');parser.add_argument('--gpu-diagnostics',action='store_true');parser.add_argument('--performance-alpha5',action='store_true');parser.add_argument('--ultimate-voices',action='store_true');parser.add_argument('--discord-presence',action='store_true')
+parser.add_argument('--four-arms',action='store_true',help='Build the optional Four Arms launcher bridge')
+parser.add_argument('--output-dir',type=Path)
+args=parser.parse_args()
 assert not args.performance_alpha5 or (args.hero_time and args.gpu_diagnostics),'Alpha 5 requires explicit --hero-time --gpu-diagnostics'
 assert not (args.rath_disabled and args.hero_time)
 # The current contributor default must include the released authored features.
@@ -12,8 +15,10 @@ if not args.rath_disabled:args.hero_time=True
 assert not args.discord_presence or args.hero_time,'Discord presence requires the API 7 Hero Time bridge'
 assert not args.ultimate_voices or args.hero_time,'Ultimate voices require Hero Time'
 assert not args.gpu_diagnostics or args.hero_time,'GPU diagnostics require the matching Hero Time API 7 profile'
-out=ROOT/('build/gpu-diagnostic-release' if args.gpu_diagnostics else 'build/rath-disabled-release' if args.rath_disabled else 'build/hero-time-release' if args.hero_time else 'build/settings-release');out.mkdir(parents=True,exist_ok=True)
-program=out/'AllAliensProgram.bin';program.write_bytes(encode(authored(disable_rath=args.rath_disabled,preload_resources=args.hero_time)))
+assert not (args.four_arms and args.rath_disabled),'Four Arms requires the standard roster'
+out=args.output_dir.resolve() if args.output_dir else ROOT/('build/four-arms-release-bridge' if args.four_arms else 'build/gpu-diagnostic-release' if args.gpu_diagnostics else 'build/rath-disabled-release' if args.rath_disabled else 'build/hero-time-release' if args.hero_time else 'build/settings-release')
+out.mkdir(parents=True,exist_ok=True)
+program=out/'AllAliensProgram.bin';program.write_bytes(encode(authored(disable_rath=args.rath_disabled,preload_resources=args.hero_time,four_arms_probe=args.four_arms)))
 hero_arguments=[]
 if args.hero_time:
     from prepare_hero_time_candidate import authored as hero_authored
@@ -25,7 +30,8 @@ if args.hero_time:
         hero_arguments.append('/resource:'+str(voice)+',CosmicUltimateVoiceResolver.bin')
 os.environ.update(TEMP=str(ROOT/'data/temp'),TMP=str(ROOT/'data/temp'))
 csc=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-sources=[str(ROOT/'launcher'/n) for n in ['NativeBridge.cs','InstalledGame.cs','IsoImage.cs','GameMenuPatch.cs','AllAliensPatch.cs','SaveReset.cs']]
+sources=[str(ROOT/'launcher'/('four-arms' if args.four_arms and n in ('NativeBridge.cs','GameMenuPatch.cs','AllAliensPatch.cs') else '')/n)
+         for n in ['NativeBridge.cs','InstalledGame.cs','IsoImage.cs','GameMenuPatch.cs','AllAliensPatch.cs','SaveReset.cs']]
 if args.ultimate_voices:sources.extend(str(ROOT/'launcher'/n) for n in ['UltimateVoicePatch.cs','UltimateVoiceLinks.cs'])
 if args.discord_presence:sources.extend(str(ROOT/'launcher'/n) for n in ['DiscordPresence.cs','DiscordPresencePatch.cs'])
 subprocess.run([str(csc),'/nologo','/optimize+','/target:winexe','/platform:x64',

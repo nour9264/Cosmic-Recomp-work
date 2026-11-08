@@ -25,6 +25,11 @@ add_executable(CosmicRecomp WIN32 main.cpp
   "${IMGUI}/backends/imgui_impl_sdl3.cpp"
   "${IMGUI}/backends/imgui_impl_opengl3.cpp"
   "${RUI_ROOT}/src/common/launcher_gl.c")
+enable_language(RC)
+target_sources(CosmicRecomp PRIVATE ../cosmic_icon.rc)
+target_include_directories(CosmicRecomp PRIVATE "$<$<COMPILE_LANGUAGE:RC>:${CMAKE_CURRENT_SOURCE_DIR}/..>")
+set_source_files_properties(../cosmic_icon.rc PROPERTIES
+  OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../cosmic_icon.ico")
 target_include_directories(CosmicRecomp PRIVATE "${IMGUI}" "${RUI_ROOT}/src")
 target_compile_definitions(CosmicRecomp PRIVATE LNG_SDL3=1 SDL_MAIN_HANDLED UNICODE _UNICODE NOMINMAX)
 target_link_libraries(CosmicRecomp PRIVATE SDL3::SDL3 opengl32)

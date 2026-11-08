@@ -14,10 +14,18 @@ include(generated/rexglue.cmake)
 set(BEN10_SOURCES
     src/main.cpp
     src/frame_metrics.cpp
+    src/albedo_textures.cpp
 )
 
 if(WIN32)
-    add_executable(ben10 WIN32 ${BEN10_SOURCES})
+    enable_language(RC)
+    add_executable(ben10 WIN32 ${BEN10_SOURCES} ../launcher/cosmic_icon.rc)
+    target_sources(ben10 PRIVATE src/default_prompt_sprites.rc)
+    target_include_directories(ben10 PRIVATE "$<$<COMPILE_LANGUAGE:RC>:${CMAKE_CURRENT_SOURCE_DIR}/../launcher>" "$<$<COMPILE_LANGUAGE:RC>:${CMAKE_CURRENT_SOURCE_DIR}/src>")
+    set_source_files_properties(src/default_prompt_sprites.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/default_prompt_sprites.bin")
+    set_source_files_properties(../launcher/cosmic_icon.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../launcher/cosmic_icon.ico")
 else()
     add_executable(ben10 ${BEN10_SOURCES})
 endif()

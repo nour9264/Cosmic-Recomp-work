@@ -115,6 +115,37 @@ namespace CosmicRecompi {
             Directory.CreateDirectory(Path.Combine(folder, "logs"));
             File.WriteAllText(Path.Combine(folder, "installed.txt"), "Cosmic Recomp test-0.1\r\n" + IsoImage.SupportedXexSha256 + "\r\n", new UTF8Encoding(false));
         }
+        static void PrepareAlbedo(string root, string folder) {
+            string tools = Path.Combine(root, "four-arms-importer");
+            string script = Path.Combine(tools, "prepare_albedo_textures.py");
+            if (!File.Exists(script)) return;
+            string target = Path.Combine(folder, "user", "albedo-textures.bin");
+            string fourArms = Path.Combine(folder, "four-arms", "g_fa.xbx");
+            bool hasFourArms = File.Exists(fourArms);
+            if (File.Exists(target)) {
+                using (var reader = new BinaryReader(File.OpenRead(target))) {
+                    if (reader.BaseStream.Length > 12 &&
+                        reader.ReadUInt64() == 0x0000000244424c41UL &&
+                        reader.ReadUInt32() == (hasFourArms ? 26u : 25u)) return;
+                }
+            }
+            string temporary = target + ".new";
+            var start = new ProcessStartInfo(Path.Combine(tools, "python.exe")) {
+                Arguments = "-B \"" + script + "\" \"" + Path.Combine(folder, "game") + "\" \"" +
+                    temporary + "\"" + (hasFourArms ? " --four-arms \"" + fourArms + "\"" : ""),
+                WorkingDirectory = tools,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            };
+            using (var process = Process.Start(start)) {
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                if (process.ExitCode != 0) throw new IOException("Albedo texture preparation failed: " + error);
+            }
+            if (File.Exists(target)) File.Replace(temporary, target, null);
+            else File.Move(temporary, target);
+        }
         public static Process Start(string root, bool uncapped, string returnToLauncherEvent = null, Action prepareGameMenu = null, Action<ProcessStartInfo> configureProcess = null) {
             string diagnostics=LauncherLog(root);
             try {
@@ -135,6 +166,7 @@ namespace CosmicRecompi {
             catch (IOException) { throw new IOException("This installation is already in use. Close the other game or launcher session first."); }
             try {
             if (prepareGameMenu != null) prepareGameMenu();
+            PrepareAlbedo(root, folder);
             string log = Path.Combine(folder, "logs", "runtime.log").Replace('\\', '/');
             string resolution = "720p", frameLimit = "30",fullscreen="false";
             string video = Path.Combine(folder, "user", "pc-video.ini");
@@ -162,6 +194,10 @@ namespace CosmicRecompi {
             foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
                 if (((string)variable.Key).StartsWith("BEN10_", StringComparison.OrdinalIgnoreCase)) start.EnvironmentVariables.Remove((string)variable.Key);
             start.EnvironmentVariables["BEN10_PORTABLE_ROOT"] = folder;
+            string introSetting = Path.Combine(folder, "user", "skip-intro.txt");
+            bool skipIntro = File.Exists(introSetting) && File.ReadAllText(introSetting).Trim() == "on";
+            if (skipIntro) start.EnvironmentVariables["BEN10_SKIP_INTRO"] = "1";
+            File.AppendAllText(diagnostics, "Skip intro logos: " + (skipIntro ? "on" : "off") + Environment.NewLine);
             if (returnToLauncherEvent != null)
                 start.EnvironmentVariables["BEN10_RETURN_TO_LAUNCHER_EVENT"] = returnToLauncherEvent;
             start.EnvironmentVariables["BEN10_GRAPHICS_BACKEND"] = "d3d12";

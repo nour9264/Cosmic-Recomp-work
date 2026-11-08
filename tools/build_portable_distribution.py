@@ -31,7 +31,7 @@ for line in manifest.read_text().splitlines():
     runtime.add(name)
 assert required<=runtime
 assert (stage/'runtime/pc-menu-api.txt').read_text().strip() in {'3','7'},'Matching released native-menu runtime required'
-allowed_root={'CosmicRecomp.exe','CosmicBridge.exe','PROVENANCE.json','README.txt',
+allowed_root={'CosmicRecomp.exe','CosmicBridge.exe','CosmicFourArmsBridge.exe','PROVENANCE.json','README.txt',
               'README.md','README.pt-BR.md','SHA256SUMS.txt','LICENSE','LICENSE.txt',
               'ARCHITECTURE.md','BUILD.md','CONTRIBUTING.md','RELEASE_NOTES.md','HOTFIX.md',
               'ROADMAP.md','SECURITY.md','SOURCES.md','TESTING.md','THIRD_PARTY.md',
@@ -39,6 +39,12 @@ allowed_root={'CosmicRecomp.exe','CosmicBridge.exe','PROVENANCE.json','README.tx
 crt={'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll',
      'msvcp140_1.dll','msvcp140_2.dll','msvcp140_atomic_wait.dll',
      'msvcp140_codecvt_ids.dll','vccorlib140.dll','vcruntime140_threads.dll'}
+importer={'python.exe','python3.dll','python310.dll','python310.zip','python310._pth',
+          '_hashlib.pyd','libcrypto-1_1.dll','PYTHON_LICENSE.txt','make_npdata.exe',
+          'prepare_four_arms_import.py','convert_four_arms_meshes.py','convert_four_arms_textures.py',
+          'extract_discord_level_images.py','extract_four_arms_skin_weights.py','merge_alien_streams.py',
+          'prepare_all_aliens_candidate.py','prepare_pause_menu_extension.py',
+          'stage_four_arms_archive.py','stage_four_arms_registration.py','prepare_albedo_textures.py'}
 files=[]
 for p in sorted(stage.rglob('*')):
     if p.is_dir():continue
@@ -48,6 +54,8 @@ for p in sorted(stage.rglob('*')):
     elif relative.parts[0]=='runtime':assert len(relative.parts)==2 and (p.name in runtime or p.name=='SHA256SUMS.txt'),relative
     elif relative.parts[0]=='licenses':
         assert p.suffix.lower() in ('.txt','.md','') or p.name.upper().startswith(('LICENSE','LICENCE','COPYING','NOTICE','AUTHORS')),relative
+    elif relative.parts[0]=='four-arms-importer':
+        assert len(relative.parts)==2 and p.name in importer|crt,relative
     else:raise AssertionError('Unexpected package directory: '+str(relative))
     assert p.suffix.lower() not in ('.iso','.xex','.pk4','.ds','.pdb','.xbx','.dat')
     data=p.read_bytes()
@@ -66,6 +74,7 @@ os.environ.update(TEMP=str(root/'data/temp'),TMP=str(root/'data/temp'))
 compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 subprocess.run([str(compiler),'/nologo','/optimize+','/platform:x64','/target:winexe',
  '/win32manifest:'+str(root/'launcher/windows.manifest'),
+ '/win32icon:'+str(root/'launcher/cosmic_icon.ico'),
  '/reference:System.Windows.Forms.dll','/reference:System.IO.Compression.dll',
  '/reference:System.IO.Compression.FileSystem.dll','/out:'+str(output),
  '/resource:'+str(payload)+',CosmicPayload.zip',str(root/'launcher/PortableBootstrap.cs')],check=True)

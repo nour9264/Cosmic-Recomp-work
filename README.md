@@ -3,6 +3,14 @@
 <a id="english"></a>
 # Cosmic Recomp
 
+## Alpha 7.1 - Button Icons, Albedo Fix & Game Icon
+
+**Community Alpha 7.1:** [Download the Windows installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.7.1).
+
+- **Albedo and Four Arms:** The launcher prepares Albedo's textures locally and includes the Four Arms recolor when the optional form is installed.
+- **Button Icons:** Choose Xbox, PlayStation, or Keyboard in **Options → Video → Button Icons**. The setting covers supported menu, HUD, and tutorial prompts. PlayStation icons are built in.
+- **Game icon:** Added to the Windows game, launcher, and installer.
+
 ## Alpha 7 - Four Arms, Albedo Mode & Launcher Improvements
 
 **Community Alpha 7:** [Download the Windows installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.7).

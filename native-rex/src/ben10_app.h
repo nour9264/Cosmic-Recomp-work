@@ -12,7 +12,7 @@
 #include <rex/ui/presenter.h>
 #include <fstream>
 #include <thread>
-#include <Windows.h>
+#include "../../launcher/cosmic_window_icon.h"
 #include "frame_metrics.h"
 #include "gpu_frame_capture.h"
 #include "replay_input.h"
@@ -76,6 +76,11 @@ class Ben10App : public rex::ReXApp {
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
     Ben10InitializeFrameCapture();
+    if (std::getenv("BEN10_PORTABLE_ROOT")) {
+      // Restore the original bank after the previous archive-based preview.
+      ben10::albedo_textures::PrepareButtonIconArchive(game_data_root(),user_data_root(),
+          ben10::albedo_textures::ButtonIcons::Xbox);
+    }
     if (const char* mode=std::getenv("BEN10_WINDOW_MODE")) {
       const std::string_view value(mode);
       if (value!="windowed" && value!="borderless")
@@ -278,7 +283,10 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
-    window()->SetTitle("Cosmic Recomp Alpha 7 (community)");
+    window()->SetTitle("Cosmic Recomp Alpha 7.1 (community)");
+#ifdef _WIN32
+    SetCosmicWindowIcon(static_cast<HWND>(window()->GetNativeWindowHandle()));
+#endif
     ben10_fault_probe::Install();
     for(uint32_t address : {0x8210BB88u,0x8229A9F8u,0x8229AA20u,0x8229AA48u,
                             0x8229AA60u,0x8229AA78u,0x8229AA90u,0x8229AAA8u}) {
@@ -307,6 +315,13 @@ class Ben10App : public rex::ReXApp {
     // Presentation/dialogs are created before Runtime. Bind only after setup.
     if(ben10_pc_menu::enabled()) {
       ben10::albedo_textures::pack_path=runtime()->user_data_root()/"albedo-textures.bin";
+      const auto buttonIcons=runtime()->user_data_root()/"playstation-button-icons.bin";
+      if(std::filesystem::is_regular_file(buttonIcons))
+        ben10::albedo_textures::button_icon_preview_path=buttonIcons;
+      const auto keyboardIcons=runtime()->user_data_root()/"keyboard-button-icons.bin";
+      if(std::filesystem::is_regular_file(keyboardIcons))
+        ben10::albedo_textures::keyboard_icon_path=keyboardIcons;
+      ben10::albedo_textures::prompt_sprite_path=runtime()->user_data_root()/"playstation-prompt-sprites.bin";
       ben10::albedo_textures::memory.store(runtime()->memory(),std::memory_order_release);
       ben10_pc_menu::runtime=runtime();
       ben10_pc_menu::window=window();

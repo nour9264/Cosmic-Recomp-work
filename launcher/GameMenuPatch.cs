@@ -75,7 +75,7 @@ namespace CosmicRecompi {
             if(native=="cosmic_video_options")foreach(uint word in new uint[] {0x00000507,Crc("overlay"),0x00000607,Crc("CosmicRestoreOptions"),0x00000207,Crc("overlay"),0x00000217,Crc("pushfunction"),0x02050020,1})Append(stream,word);
             Append(stream,0x21);
         }
-        static byte[] LegacyFrontend(byte[] original) {
+        static byte[] LegacyFrontend(byte[] original,bool previousQuitBinding=false) {
             if(Hash(original)!=FrontendHash)throw new InvalidDataException("Unsupported original frontend script.");
             if(Read(original,0)!=0x1badbabe || Read(original,4)!=103)throw new InvalidDataException("Unsupported frontend header.");
             using(MemoryStream output=new MemoryStream()) {
@@ -113,7 +113,9 @@ namespace CosmicRecompi {
                 Wrapper(output,"CosmicWipeConfirmed","cosmic_wipe_progress");
 #endif
                 int replacements=0;
-                foreach(int p in Tokens(quit))if((Read(quit,p)&255)==7 && Read(quit,p+4)==0xd4abb75d){Write(quit,p+4,Crc("CosmicExitToLauncher"));replacements++;}
+                // The English YES row calls 0xe66c2a6e. Older builds replaced NO.
+                uint quitCallback=previousQuitBinding?0xd4abb75dU:0xe66c2a6eU;
+                foreach(int p in Tokens(quit))if((Read(quit,p)&255)==7 && Read(quit,p+4)==quitCallback){Write(quit,p+4,Crc("CosmicExitToLauncher"));replacements++;}
                 if(replacements!=1)throw new InvalidDataException("Unexpected confirmation layout.");
                 Append(output,Crc("CosmicQuitToLauncher"));Append(output,quitArguments);Append(output,(uint)(quit.Length/4));output.Write(quit,0,quit.Length);
                 Wrapper(output,"CosmicExitToLauncher","cosmic_quit_to_launcher");
@@ -137,6 +139,9 @@ namespace CosmicRecompi {
             ,new string[]{"cosmic_windowed_label", "WINDOWED", "cosmic_windowed"}
             ,new string[]{"cosmic_borderless_label", "BORDERLESS FULLSCREEN", "cosmic_borderless"}
             ,new string[]{"cosmic_exclusive_label", "EXCLUSIVE FULLSCREEN", "cosmic_exclusive"}
+            ,new string[]{"cosmic_icons_xbox_label", "XBOX", "cosmic_icons_xbox"}
+            ,new string[]{"cosmic_icons_playstation_label", "PLAYSTATION", "cosmic_icons_playstation"}
+            ,new string[]{"cosmic_icons_keyboard_label", "KEYBOARD", "cosmic_icons_keyboard"}
 #endif
         };
         static void Function(Stream output,string name,uint arguments,byte[] code) {
@@ -151,15 +156,15 @@ namespace CosmicRecompi {
                 foreach(int p in Tokens(header))if((Read(header,p)&255)==7 || (Read(header,p)&255)==8)
                     if(Read(header,p+4)==0x8610f32e)Write(header,p+4,Crc(menu));
                 code.Write(header,0,header.Length);
-                foreach(string[] row in rows)foreach(uint word in new uint[]{
+                foreach(string[] row in rows)if(row!=null)foreach(uint word in new uint[]{
                     0x00000607,Crc(menu),0x00000705,Crc(row[0]),0x00000801,
                     0x00000907,Crc(row[2]),0x00000a01,0x00000307,Crc("Menu_AddOption"),0x05060320,1})Append(code,word);
                 foreach(uint word in new uint[]{0x00000607,Crc(menu),0x00000307,Crc("MenuStack_Push"),0x01060320,1,0x21})Append(code,word);
                 return code.ToArray();
             }
         }
-        static byte[] NativeMenuFrontend(byte[] original) {
-            byte[] legacy=LegacyFrontend(original),template=null;
+        static byte[] NativeMenuFrontend(byte[] original,bool previousQuitBinding=false,bool buttonIcons=true) {
+            byte[] legacy=LegacyFrontend(original,previousQuitBinding),template=null;
             int cursor=8;
             for(int i=0;i<103;i++) {
                 int bytes=checked((int)Read(original,cursor+8)*4);
@@ -170,7 +175,7 @@ namespace CosmicRecompi {
             using(MemoryStream output=new MemoryStream()) {
                 Append(output,0x1badbabe);Append(output,Read(legacy,4)+(uint)(VideoChoices.Length+2
 #if COSMIC_NATIVE_SETTINGS
-                    +2
+                    +2+(buttonIcons?1:-3)
 #endif
                     ));cursor=8;
                 for(int i=0;i<Read(legacy,4);i++) {
@@ -181,6 +186,7 @@ namespace CosmicRecompi {
 #if COSMIC_NATIVE_SETTINGS
                         ,new string[]{"cosmic_overlay_label","SHOW FPS","CosmicOverlayOptions"}
                         ,new string[]{"cosmic_display_label","DISPLAY MODE","CosmicDisplayOptions"}
+                        ,buttonIcons?new string[]{"cosmic_button_icons_label","BUTTON ICONS","CosmicButtonIconOptions"}:null
 #endif
                         }));
                     else output.Write(legacy,cursor,12+bytes);
@@ -191,8 +197,10 @@ namespace CosmicRecompi {
 #if COSMIC_NATIVE_SETTINGS
                 Function(output,"CosmicOverlayOptions",1,NativeMenu(template,"cosmic_overlay_menu","cosmic_overlay_label",new string[][] {VideoChoices[7],VideoChoices[8]}));
                 Function(output,"CosmicDisplayOptions",1,NativeMenu(template,"cosmic_display_menu","cosmic_display_label",new string[][] {VideoChoices[9],VideoChoices[10],VideoChoices[11]}));
+                if(buttonIcons)Function(output,"CosmicButtonIconOptions",1,NativeMenu(template,"cosmic_button_icon_menu","cosmic_button_icons_label",new string[][] {VideoChoices[12],VideoChoices[13],VideoChoices[14]}));
 #endif
                 foreach(string[] choice in VideoChoices) {
+                    if(!buttonIcons && choice[2].StartsWith("cosmic_icons_",StringComparison.Ordinal))continue;
                     using(MemoryStream callback=new MemoryStream()) {
                         foreach(uint word in new uint[]{0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),0x00000217,Crc(choice[2]),0x01050020,1})Append(callback,word);
 #if COSMIC_NATIVE_SETTINGS
@@ -200,7 +208,7 @@ namespace CosmicRecompi {
                         // callback runs. A setting has no child menu to push;
                         // reset its completed action and show the current one.
                         int choiceIndex=Array.IndexOf(VideoChoices,choice);
-                        string owner=choiceIndex<4?"cosmic_resolution_menu":choiceIndex<7?"cosmic_frame_menu":choiceIndex<9?"cosmic_overlay_menu":"cosmic_display_menu";
+                        string owner=choiceIndex<4?"cosmic_resolution_menu":choiceIndex<7?"cosmic_frame_menu":choiceIndex<9?"cosmic_overlay_menu":choiceIndex<12?"cosmic_display_menu":"cosmic_button_icon_menu";
                         foreach(uint word in new uint[]{0x00000207,Crc(owner),0x00000502,0x00050219,0x84fe6ee3,
                             0x00000503,0,0x00050219,0xa393d2fb})Append(callback,word);
                         foreach(uint word in new uint[]{0x00010502,0x00000207,Crc("MenuStack_ShowCurrentMenu"),0x01050220,1})Append(callback,word);
@@ -218,7 +226,7 @@ namespace CosmicRecompi {
                     uint identity=Read(result,cursor);
                     if(identity==Crc("CosmicResolutionOptions") || identity==Crc("CosmicFrameOptions")
 #if COSMIC_NATIVE_SETTINGS
-                        || identity==Crc("CosmicOverlayOptions") || identity==Crc("CosmicDisplayOptions")
+                        || identity==Crc("CosmicOverlayOptions") || identity==Crc("CosmicDisplayOptions") || identity==Crc("CosmicButtonIconOptions")
 #endif
                         )
                         foreach(int p in Tokens(code))if((Read(code,p)&255)==7)
@@ -229,15 +237,18 @@ namespace CosmicRecompi {
             }
         }
         public static byte[] Frontend(byte[] original) {
-            byte[] menus=AllAliensPatch.Frontend(RathFrontend(original));
+            return Frontend(original,false);
+        }
+        static byte[] Frontend(byte[] original,bool previousQuitBinding,bool albedoHud=true,bool buttonIcons=true) {
+            byte[] menus=AllAliensPatch.Frontend(RathFrontend(original,previousQuitBinding,buttonIcons));
 #if COSMIC_HERO_TIME
-            return HeroTimeFrontend(original,menus);
+            return HeroTimeFrontend(original,menus,albedoHud);
 #else
             return menus;
 #endif
         }
 #if COSMIC_HERO_TIME
-        static byte[] HeroTimeFrontend(byte[] original,byte[] menus) {
+        static byte[] HeroTimeFrontend(byte[] original,byte[] menus,bool albedoHud) {
             byte[] template=null;int cursor=8;
             for(int i=0;i<Read(original,4);i++) {
                 int bytes=checked((int)Read(original,cursor+8)*4);
@@ -246,7 +257,7 @@ namespace CosmicRecompi {
             }
             if(template==null)throw new InvalidDataException("Original Extras menu template missing.");
             using(var output=new MemoryStream()) {
-                Append(output,0x1badbabe);Append(output,Read(menus,4)+3);cursor=8;int renamed=0;
+                Append(output,0x1badbabe);Append(output,Read(menus,4)+(albedoHud?4U:3U));cursor=8;int renamed=0;
                 for(int i=0;i<Read(menus,4);i++) {
                     int bytes=checked((int)Read(menus,cursor+8)*4);
                     uint identity=Read(menus,cursor);
@@ -260,9 +271,11 @@ namespace CosmicRecompi {
                 byte[] empty=NativeMenu(template,"cosmic_extras_menu","cosmic_extras_label",new string[0][]);
                 using(var extras=new MemoryStream()) {
                     extras.Write(empty,0,37*4);
-                    foreach(string[] row in new string[][] {
+                    var rows=new List<string[]> {
                         new string[]{"cosmic_all_aliens_label","cosmic_all_aliens_enabled","CosmicToggleAllAliens"},
-                        new string[]{"cosmic_hero_label","cosmic_hero_enabled","CosmicToggleHeroTime"}}) {
+                        new string[]{"cosmic_hero_label","cosmic_hero_enabled","CosmicToggleHeroTime"}};
+                    if(albedoHud)rows.Add(new string[]{"cosmic_albedo_hud_label","cosmic_albedo_hud_enabled","CosmicToggleAlbedoHud"});
+                    foreach(string[] row in rows) {
                         foreach(uint word in new uint[]{
                             0x00000807,Crc("cosmic_extras_menu"),0x00000905,Crc(row[0]),
                             0x00001d07,Crc("overlay"),0x00281d06,0x001e1d17,Crc(row[1]),0x01281e20,1,
@@ -278,12 +291,13 @@ namespace CosmicRecompi {
                         0x00000217,Crc("cosmic_toggle_hero_time"),0x01050020,1,0x21})Append(callback,word);
                     Function(output,"CosmicToggleHeroTime",1,callback.ToArray());
                 }
+                if(albedoHud)Wrapper(output,"CosmicToggleAlbedoHud","cosmic_toggle_albedo_hud");
                 return output.ToArray();
             }
         }
 #endif
-        static byte[] RathFrontend(byte[] original) {
-            byte[] menus=NativeMenuFrontend(original);
+        static byte[] RathFrontend(byte[] original,bool previousQuitBinding=false,bool buttonIcons=true) {
+            byte[] menus=NativeMenuFrontend(original,previousQuitBinding,buttonIcons);
 #if COSMIC_NATIVE_SETTINGS
             // Preserve normal progression and the original cheat. All Aliens
             // selects Rath through its temporary pages without changing saves.
@@ -342,10 +356,12 @@ namespace CosmicRecompi {
         public static byte[] English(byte[] original) {
             return AllAliensPatch.English(NativeEnglish(original));
         }
-        static byte[] NativeEnglish(byte[] original) {
+        static byte[] NativeEnglish(byte[] original,bool albedoHud=true,bool previewLabel=false,bool buttonIcons=true) {
             using(MemoryStream output=new MemoryStream()) {
                 byte[] legacy=LegacyEnglish(original);output.Write(legacy,0,legacy.Length);
                 var rows=new List<string[]>(VideoChoices);
+                if(!buttonIcons)rows.RemoveAll(row=>row[0].StartsWith("cosmic_icons_",StringComparison.Ordinal));
+                if(buttonIcons)rows.Add(new string[]{"cosmic_button_icons_label","BUTTON ICONS"});
                 rows.Add(new string[]{"cosmic_resolution_label",
 #if COSMIC_NATIVE_SETTINGS
                     "OUTPUT RESOLUTION"
@@ -359,6 +375,7 @@ namespace CosmicRecompi {
                 rows.Add(new string[]{"cosmic_standard_label","STANDARD"});
                 rows.Add(new string[]{"cosmic_extras_label","EXTRAS"});
                 rows.Add(new string[]{"cosmic_hero_label","HERO TIME (L3)"});
+                if(albedoHud)rows.Add(new string[]{"cosmic_albedo_hud_label",previewLabel?"ALBEDO HUD PREVIEW":"PLAY AS ALBEDO"});
 #endif
 #if COSMIC_NATIVE_SETTINGS
                 rows.Add(new string[]{"cosmic_overlay_label","SHOW FPS"});
@@ -410,7 +427,11 @@ namespace CosmicRecompi {
         }
         static bool IsAuthoredTranslation(byte[] original,byte[] current) {
             try {
-                foreach(byte[] authored in new byte[][]{English(original),NativeEnglish(original)}) {
+                byte[] previous=NativeEnglish(original,false);
+                byte[] preview=NativeEnglish(original,true,true);
+                byte[] priorIcons=NativeEnglish(original,true,false,false);
+                foreach(byte[] authored in new byte[][]{English(original),NativeEnglish(original),AllAliensPatch.English(priorIcons),priorIcons,
+                    AllAliensPatch.English(previous),previous,AllAliensPatch.English(preview),preview}) {
                     int suffix=authored.Length-original.Length;
                     if(current.Length<suffix+4 || !TextKeys(authored).SetEquals(TextKeys(current)))continue;
                     bool matches=true;
@@ -428,9 +449,15 @@ namespace CosmicRecompi {
             byte[] originalEnglish=File.ReadAllBytes(File.Exists(englishBackup)?englishBackup:english);
             byte[] updated=Frontend(original),updatedEnglish=translation==null?English(originalEnglish):MergeTranslation(originalEnglish,translation);
             byte[] current=File.ReadAllBytes(frontend),currentEnglish=File.ReadAllBytes(english);
-            string expected=Hash(updated),expectedEnglish=Hash(updatedEnglish);
-            if(Hash(current)==expected && Hash(currentEnglish)==expectedEnglish)return;
-            if((Hash(current)!=expected && Hash(current)!=FrontendHash && Hash(current)!=Hash(LegacyFrontend(original)) && Hash(current)!=Hash(NativeMenuFrontend(original)) && Hash(current)!=Hash(RathFrontend(original))) ||
+            string expected=Hash(updated),expectedEnglish=Hash(updatedEnglish),currentHash=Hash(current);
+            if(currentHash==expected && Hash(currentEnglish)==expectedEnglish)return;
+            if((currentHash!=expected && currentHash!=FrontendHash &&
+                currentHash!=Hash(LegacyFrontend(original)) && currentHash!=Hash(NativeMenuFrontend(original)) &&
+                currentHash!=Hash(RathFrontend(original)) &&
+                currentHash!=Hash(LegacyFrontend(original,true)) && currentHash!=Hash(NativeMenuFrontend(original,true)) &&
+                currentHash!=Hash(RathFrontend(original,true)) && currentHash!=Hash(Frontend(original,true)) &&
+                currentHash!=Hash(Frontend(original,false,true,false)) && currentHash!=Hash(Frontend(original,true,true,false)) &&
+                currentHash!=Hash(Frontend(original,false,false)) && currentHash!=Hash(Frontend(original,true,false))) ||
                (Hash(currentEnglish)!=EnglishHash && Hash(currentEnglish)!=Hash(LegacyEnglish(originalEnglish)) && !IsAuthoredTranslation(originalEnglish,currentEnglish)))
                 throw new IOException("The game's menu files were modified by another version. Import your ISO into a new folder; your saves are preserved separately.");
             if(!File.Exists(frontendBackup))File.WriteAllBytes(frontendBackup,original);

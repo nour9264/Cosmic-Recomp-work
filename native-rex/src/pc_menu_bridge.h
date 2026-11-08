@@ -17,6 +17,9 @@
 #include "all_aliens_paging.h"
 #include "performance_visibility.h"
 #include "discord_presence.h"
+#include "ultimate_hud_palette.h"
+#include "albedo_hud.h"
+#include "albedo_textures.h"
 #include <vector>
 #include <mutex>
 #include <rex/input/input_system.h>
@@ -88,6 +91,20 @@ inline void ToggleHeroTime(PPCContext& ctx,uint8_t* base) {
     REXLOG_INFO("Cosmic private Hero Time: {}",next?"ON":"OFF");
   }catch(const std::exception& error){REXLOG_ERROR("Cosmic Hero Time settings: {}",error.what());}
 }
+inline void AlbedoHudEnabled(PPCContext& ctx,uint8_t* base) {
+  ReturnNumber(ctx,base,ben10::albedo_hud::enabled.load(std::memory_order_relaxed)?1.0f:0.0f);
+}
+inline void ToggleAlbedoHud(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  auto* host=runtime.load();if(!host)return;
+  try {
+    std::lock_guard guard(video_settings_mutex);
+    const bool next=!ben10::albedo_hud::enabled.load(std::memory_order_relaxed);
+    SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","albedo_hud_preview",next?"on":"off");
+    ben10::albedo_hud::enabled.store(next,std::memory_order_relaxed);
+    REXLOG_INFO("Cosmic Gameplay: Albedo HUD preview {}",next?"ON":"OFF");
+  }catch(const std::exception& error){REXLOG_ERROR("Cosmic Albedo HUD settings: {}",error.what());}
+}
 inline void HeroTimeButton(PPCContext& ctx,uint8_t* base) {
   auto* host=runtime.load();rex::input::X_INPUT_STATE state{};
   auto* input=host?static_cast<rex::input::InputSystem*>(host->input_system()):nullptr;
@@ -115,6 +132,10 @@ template<int Event> void HeroTimeTrace(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   const char* events[]={"resources ready","Ultimate confirmed","return requested","Ben confirmed; recharge started","recharge complete"};
   REXLOG_INFO("Cosmic private Hero Time: {}",events[Event]);
+}
+template<bool Active> void UltimateHudPalette(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  ben10::ultimate_hud::active.store(Active,std::memory_order_relaxed);
 }
 inline bool enabled() {
   if(std::getenv("BEN10_RETURN_TO_LAUNCHER_EVENT"))return true;
@@ -262,6 +283,19 @@ template<int Mode> void SetDisplayMode(PPCContext& ctx,uint8_t* base) {
     }catch(const std::exception& error){REXLOG_ERROR("Cosmic display mode failed: {}",error.what());}
   });
 }
+inline constexpr const char* ButtonIconNames[]={"auto","xbox","playstation","keyboard"};
+template<ben10::albedo_textures::ButtonIcons Mode> void SetButtonIcons(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  auto* host=runtime.load();
+  if(!host)return;
+  try {
+    std::lock_guard guard(video_settings_mutex);
+    const char* mode=ButtonIconNames[static_cast<int>(Mode)];
+    SaveVideoKey(host->user_data_root()/"pc-video.ini","button_icons",mode);
+    ben10::albedo_textures::button_icons=Mode;
+    REXLOG_INFO("Cosmic native VIDEO: button_icons={}",mode);
+  }catch(const std::exception& error){REXLOG_ERROR("Cosmic button icons failed: {}",error.what());}
+}
 template<bool Visible> void SetPerformanceOverlay(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);auto* host=runtime.load();if(!host)return;
   try {
@@ -323,6 +357,14 @@ inline void OnFrame() {
   add("cosmic_windowed",SetDisplayMode<0>);
   add("cosmic_borderless",SetDisplayMode<1>);
   add("cosmic_exclusive",SetDisplayMode<2>);
+  using ben10::albedo_textures::ButtonIcons;
+  add("cosmic_icons_auto",SetButtonIcons<ButtonIcons::Auto>);
+  add("cosmic_icons_xbox",SetButtonIcons<ButtonIcons::Xbox>);
+  add("cosmic_icons_playstation",SetButtonIcons<ButtonIcons::PlayStation>);
+  add("cosmic_icons_keyboard",SetButtonIcons<ButtonIcons::Keyboard>);
+  const auto iconMode=ReadVideoSetting(host->user_data_root()/"pc-video.ini","button_icons","xbox");
+  for(int i=0;i<4;++i)
+    if(iconMode==ButtonIconNames[i])ben10::albedo_textures::button_icons=static_cast<ButtonIcons>(i);
   add("cosmic_wipe_progress",WipeProgress);
   add("cosmic_wipe_prompt",WipePrompt);
   {std::ifstream settings(host->user_data_root()/"pc-video.ini");std::string line;
@@ -336,6 +378,8 @@ inline void OnFrame() {
       if(line=="all_aliens=off")all_aliens_enabled=false;
       if(HeroTimeDiagnostic() && line=="hero_time=on")hero_time_enabled=true;
       if(line=="hero_time=off")hero_time_enabled=false;
+      if(line=="albedo_hud_preview=on")ben10::albedo_hud::enabled=true;
+      if(line=="albedo_hud_preview=off")ben10::albedo_hud::enabled=false;
     }}
   add("cosmic_all_aliens_page",AllAliensPage);
   if(std::getenv("BEN10_DISCORD_STATUS_FILE")) {
@@ -362,6 +406,10 @@ inline void OnFrame() {
     add("cosmic_hero_return",HeroTimeTrace<2>);
     add("cosmic_hero_recharge",HeroTimeTrace<3>);
     add("cosmic_hero_ready",HeroTimeTrace<4>);
+    add("cosmic_ultimate_hud_on",UltimateHudPalette<true>);
+    add("cosmic_ultimate_hud_off",UltimateHudPalette<false>);
+    add("cosmic_albedo_hud_enabled",AlbedoHudEnabled);
+    add("cosmic_toggle_albedo_hud",ToggleAlbedoHud);
   }
 }
 }
