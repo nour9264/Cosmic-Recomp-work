@@ -14,6 +14,12 @@ from stage_four_arms_registration import initialize_probe_upgrades, registration
 from prepare_pause_menu_extension import records
 
 
+def original_script(path):
+    # Play can patch these scripts in place after saving their original bytes.
+    backup = path.with_name(path.name + '.cosmic-original')
+    return (backup if backup.is_file() else path).read_bytes()
+
+
 def prepare(ps3_game, xbox_game, decoder, output):
     files = read_ps3_donor(ps3_game)
     donor = files['g_fa.ps3']
@@ -28,7 +34,7 @@ def prepare(ps3_game, xbox_game, decoder, output):
         4: convert_mesh_bank(sections[4], mesh_reference),
         22: convert_skin_bank(sections[22], sections[4], xbox_skin),
     })
-    globals_code = next(code for key, _, code in records((scripts / 'globals.ds').read_bytes())
+    globals_code = next(code for key, _, code in records(original_script(scripts / 'globals.ds'))
                         if key == 0x5b258dcd)
     upgrade_initializer = initialize_probe_upgrades(globals_code)
 
@@ -45,7 +51,7 @@ def prepare(ps3_game, xbox_game, decoder, output):
         ps3_script = decoded.read_bytes()
         if len(ps3_script) != 33232 or ps3_script[:4] != b'\x1b\xad\xba\xbe':
             raise ValueError('PS3 script decoder did not produce the verified script layout')
-        platform_script = registration((scripts / 'gld_xbx.ds').read_bytes(), ps3_script)
+        platform_script = registration(original_script(scripts / 'gld_xbx.ds'), ps3_script)
         bundle = work / 'bundle'
         bundle.mkdir()
         (bundle / 'g_fa.xbx').write_bytes(archive)

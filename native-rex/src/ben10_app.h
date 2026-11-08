@@ -18,6 +18,7 @@
 #include "replay_input.h"
 #include "performance_overlay.h"
 #include "pc_menu_bridge.h"
+#include "albedo_textures.h"
 #include "game_fault_probe.h"
 #include "diagnostic_paths.h"
 #include <rex/input/input_system.h>
@@ -277,7 +278,7 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
-    window()->SetTitle("Cosmic Recomp Alpha 6 (community)");
+    window()->SetTitle("Cosmic Recomp Alpha 7 (community)");
     ben10_fault_probe::Install();
     for(uint32_t address : {0x8210BB88u,0x8229A9F8u,0x8229AA20u,0x8229AA48u,
                             0x8229AA60u,0x8229AA78u,0x8229AA90u,0x8229AAA8u}) {
@@ -305,6 +306,8 @@ class Ben10App : public rex::ReXApp {
     }
     // Presentation/dialogs are created before Runtime. Bind only after setup.
     if(ben10_pc_menu::enabled()) {
+      ben10::albedo_textures::pack_path=runtime()->user_data_root()/"albedo-textures.bin";
+      ben10::albedo_textures::memory.store(runtime()->memory(),std::memory_order_release);
       ben10_pc_menu::runtime=runtime();
       ben10_pc_menu::window=window();
       if(std::getenv("BEN10_PRESENTATION_API")) {
@@ -424,6 +427,7 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+    ben10::albedo_textures::memory.store(nullptr,std::memory_order_release);
     ben10_pc_video::visible=false;
     ben10_pc_video::release_guard=false;
     if(ben10_pc_video::closed_event)SetEvent(ben10_pc_video::closed_event);

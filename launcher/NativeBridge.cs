@@ -169,6 +169,51 @@ namespace CosmicRecompi {
                             Status("ISO accepted. Select Prepare game to continue.");
                         }
                         break;
+                    case "import-four-arms":
+                        if (!InstalledGame.Ready(Root))
+                            throw new IOException("Prepare your Xbox 360 game first.");
+                        using (var dialog = new FolderBrowserDialog {
+                            Description = "Select the extracted PS3_GAME folder from the European PS3 edition (BLES01110).",
+                            ShowNewFolderButton = false
+                        }) {
+                            if (dialog.ShowDialog() != DialogResult.OK) {
+                                Status("Four Arms import cancelled.");
+                                break;
+                            }
+                            string installation = InstalledGame.Installation(Root);
+                            string bundle = Path.Combine(installation, "four-arms");
+                            string importer = Path.Combine(Root, "four-arms-importer");
+                            string python = Path.Combine(importer, "python.exe");
+                            string script = Path.Combine(importer, "prepare_four_arms_import.py");
+                            string decoder = Path.Combine(importer, "make_npdata.exe");
+                            if (!File.Exists(python) || !File.Exists(script) || !File.Exists(decoder))
+                                throw new IOException("The Four Arms importer is missing from this installation.");
+                            using (var runLock = new FileStream(Path.Combine(installation, "running.lock"),
+                                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+                                InstalledGame.VerifyImportedExecutable(Root);
+                                if (Directory.Exists(bundle))
+                                    throw new IOException("Four Arms files have already been prepared in this installation.");
+                                Status("Preparing Four Arms from your PS3 files…");
+                                var start = new System.Diagnostics.ProcessStartInfo(python) {
+                                    Arguments = "-B \"" + script + "\" \"" + dialog.SelectedPath.TrimEnd('\\') +
+                                        "\" \"" + Path.Combine(installation, "game") + "\" \"" + decoder + "\" \"" + bundle + "\"",
+                                    WorkingDirectory = importer,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true,
+                                    RedirectStandardError = true
+                                };
+                                using (var process = System.Diagnostics.Process.Start(start)) {
+                                    string error = process.StandardError.ReadToEnd();
+                                    process.WaitForExit();
+                                    if (process.ExitCode != 0) {
+                                        Diagnostic(error);
+                                        throw new IOException("Four Arms import failed. Select a supported European PS3_GAME folder. See the launcher log for details.");
+                                    }
+                                }
+                            }
+                            Status("Four Arms files prepared.");
+                        }
+                        break;
                     case "import":
                         {
                             string selected = Path.Combine(Root, "selected-iso.txt");

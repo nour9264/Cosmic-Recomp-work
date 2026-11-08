@@ -10,7 +10,6 @@ import io
 import json
 from pathlib import Path
 import struct
-from PIL import Image,ImageDraw
 
 def table(blob):
     assert blob[:8]==bytes.fromhex('7661707300010003')
@@ -44,6 +43,8 @@ def untile(data,width,height,log2):
     return bytes(linear)
 
 def decode(record):
+    from PIL import Image
+
     assert len(record)>=128
     width,height=struct.unpack_from('>HH',record,6);fmt=struct.unpack_from('>H',record,4)[0]
     assert 0<width<=4096 and 0<height<=4096
@@ -59,6 +60,7 @@ def decode(record):
     return Image.open(io.BytesIO(b'DDS '+struct.pack('<31I',*header)+raw)).convert('RGBA')
 
 def extract(game,output):
+    from PIL import Image, ImageDraw
     from prepare_all_aliens_candidate import records,decode as decode_script
     output.mkdir(parents=True,exist_ok=True);(output/'originals').mkdir(exist_ok=True)
     source=game/'global/gtex_s.xbx';textures=table(source.read_bytes())
