@@ -370,7 +370,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                     importingCinematics = false;
                     status = code == 0 ? "Imported 19 cinematics and subtitle tracks. You can now enable them in Video." :
                         code == 1 ? "Could not open the installation for import. Close the game and try again." :
-                        code == 2 ? "Invalid ZIP. It must contain all 19 WMVs and their matching subtitle files." :
+                        code == 2 ? "Invalid ZIP. It must contain all 19 MP4 or WMV clips and their matching subtitle files." :
                         "Cinematic import failed. Check available space and folder permissions.";
                 } else {
                     auto update = read(root / "launcher-status.txt");

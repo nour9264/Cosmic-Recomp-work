@@ -34,10 +34,17 @@ try {
         $expected.Add($clip + '.subtitles.tsv', $true)
     }
     $entries = @{}
+    $legacyIntroSubtitle = $null
     foreach ($entry in $zip.Entries) {
         $name = $entry.FullName.Replace('\','/')
         if ($name.StartsWith('cinematics/')) { $name = $name.Substring(11) }
         if ($name -eq '' -or $name -match '^l_[a-z]+/$') { continue }
+        # Older packs included a second copy of this subtitle at the pack root.
+        if ($name -ceq 'romd_a.subtitles.tsv') {
+            if ($legacyIntroSubtitle -or $entry.Length -le 0 -or $entry.Length -gt 128KB) { exit 2 }
+            $legacyIntroSubtitle = $entry
+            continue
+        }
         $key = if ($name.EndsWith('.mp4')) { $name.Substring(0, $name.Length - 4) + '.wmv' } else { $name }
         if (!$expected.ContainsKey($key) -or $entries.ContainsKey($key)) { exit 2 }
         $limit = if ($key.EndsWith('.wmv')) { 768MB } else { 128KB }
@@ -45,6 +52,20 @@ try {
         $entries.Add($key, @{ Name = $name; Entry = $entry })
     }
     if ($entries.Count -ne $expected.Count) { exit 2 }
+    if ($legacyIntroSubtitle) {
+        $canonical = $entries['l_romd/romd_a.subtitles.tsv'].Entry
+        if ($legacyIntroSubtitle.Length -ne $canonical.Length) { exit 2 }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $duplicateStream = $legacyIntroSubtitle.Open()
+            try { $duplicateHash = [Convert]::ToBase64String($sha.ComputeHash($duplicateStream)) }
+            finally { $duplicateStream.Dispose() }
+            $canonicalStream = $canonical.Open()
+            try { $canonicalHash = [Convert]::ToBase64String($sha.ComputeHash($canonicalStream)) }
+            finally { $canonicalStream.Dispose() }
+            if ($duplicateHash -cne $canonicalHash) { exit 2 }
+        } finally { $sha.Dispose() }
+    }
 
     $code = 3
     $stage = Join-Path $install ('cinematics-import-' + [Guid]::NewGuid().ToString('N'))
