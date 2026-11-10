@@ -44,7 +44,10 @@ importer={'python.exe','python3.dll','python310.dll','python310.zip','python310.
           'prepare_four_arms_import.py','convert_four_arms_meshes.py','convert_four_arms_textures.py',
           'extract_discord_level_images.py','extract_four_arms_skin_weights.py','merge_alien_streams.py',
           'prepare_all_aliens_candidate.py','prepare_pause_menu_extension.py',
-          'stage_four_arms_archive.py','stage_four_arms_registration.py','prepare_albedo_textures.py'}
+          'stage_four_arms_archive.py','stage_four_arms_registration.py','prepare_albedo_textures.py',
+          'way_big_portrait.rgb'}
+if (stage/'four-arms-importer/prepare_albedo_textures.py').is_file():
+    assert (stage/'four-arms-importer/way_big_portrait.rgb').stat().st_size == 256 * 256 * 3
 files=[]
 for p in sorted(stage.rglob('*')):
     if p.is_dir():continue

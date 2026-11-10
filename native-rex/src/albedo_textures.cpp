@@ -13,6 +13,7 @@
 #include <fstream>
 #include <mutex>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 #include <windows.h>
 
@@ -22,7 +23,173 @@ std::filesystem::path pack_path;
 std::filesystem::path button_icon_preview_path;
 std::filesystem::path keyboard_icon_path;
 std::filesystem::path prompt_sprite_path;
+std::atomic<bool> final_battle_trace_enabled{false};
+std::atomic<bool> final_battle_active{false};
+std::atomic<unsigned> final_battle_trace_epoch{0};
+std::atomic<bool> way_big_launch_albedo{false};
+std::atomic<bool> way_big_beam_trace_enabled{false};
 std::atomic<ButtonIcons> button_icons{ButtonIcons::Xbox};
+
+static std::array<std::atomic<bool>, 2> way_big_beam_swapped{};
+constexpr uint32_t kPlayerBeamShaft = 0xc6b6cca5;
+constexpr uint32_t kBossBeamShaft = 0x52a1d375;
+
+void SetWayBigBeamAppearance(bool player, bool swapped) {
+  way_big_beam_swapped[player].store(swapped, std::memory_order_relaxed);
+}
+
+bool SwapWayBigBeamTint(uint32_t texture, const std::array<uint32_t, 4>& colors) {
+  switch (texture) {
+    case 0xf273c4c5: case 0x81e80184: case 0x547ee6d8:
+    case 0xb5d3be15: case 0xbbfde535: case 0xcf13ed75:
+      break;
+    default:
+      return false;
+  }
+
+  // The emitter holds a copy of the stock ABGR ramp. Match its colored
+  // keys to identify the original role without tinting shared textures.
+  static constexpr uint32_t player_keys[] = {
+      0xffc9ffb9, 0xff86ff75, 0xff186f00, 0xff003503, 0xff00350e, 0xff25f900,
+      0xff00b316, 0xff00f90d, 0xff00ea0c, 0xff00f00c, 0xff1cff15,
+      0x0000b009, 0xff11ff17, 0xff00ea17, 0xff00b312, 0xff00d215, 0xff0dff00,
+      // Green impact ramps, applied to the fighter hit by the player.
+      0xff1cd720, 0xff44f748, 0xff275326, 0xff54fa65, 0xffd6feda,
+      0xff6fff7d, 0x9601ba05, 0x401e6625, 0xffddffe0, 0x9601b80b, 0x4000841b,
+      0xfa01470f, 0xc88bfe9c, 0x64016d0f,
+  };
+  static constexpr uint32_t boss_keys[] = {
+      0xffbbb9ff, 0xff5955ff, 0xff030075, 0xff000035, 0xff0000df, 0x000505fe,
+      0xff0000b3, 0xff0303f5, 0xff0000f0, 0xff1515ff,
+      0x000000b0, 0xff1111ff, 0xff0000ea, 0xff0000d2, 0xff0101fe,
+      0xff1a1ad9, 0xff4545f5, 0xff272752, 0xff5757f7, 0xffd6d6fe,
+      0xff6f6fff, 0x960000bb, 0x401e1e66, 0xffb0b3ff, 0x96004ab9, 0x40001b84,
+  };
+  auto matches = [&](const auto& keys) {
+    return std::count_if(colors.begin(), colors.end(), [&](uint32_t color) {
+      return std::find(std::begin(keys), std::end(keys), color) != std::end(keys);
+    });
+  };
+  auto player = matches(player_keys), boss = matches(boss_keys);
+  // The shaft and its flare use a separate four-key ramp from the muzzle.
+  // Match the full ramp so shared white and gray effects remain stock.
+  if (texture == 0xf273c4c5 || texture == 0x81e80184) {
+    constexpr uint32_t black = 0xff000000;
+    if (colors == std::array{black, 0xff06ff00u, 0xff06ff00u, black} ||
+        colors == std::array{black, 0xff00ff00u, 0xff00ff00u, black}) player = 2;
+    if (colors == std::array{black, 0xff0000ffu, 0xff0000c8u, black} ||
+        colors == std::array{black, 0xff0000ffu, 0xff0000ffu, black}) boss = 2;
+  }
+  const bool recognized = (player >= 2 && !boss) || (boss >= 2 && !player);
+  const bool swapped = recognized && way_big_beam_swapped[player != 0].load(std::memory_order_relaxed);
+  if (way_big_beam_trace_enabled.load(std::memory_order_relaxed)) {
+    static thread_local std::unordered_set<uint64_t> observations;
+    uint64_t signature = texture;
+    for (const auto color : colors) signature = (signature ^ color) * 1099511628211ull;
+    if (observations.size() < 96 && observations.insert((signature << 1) | swapped).second)
+      REXLOG_INFO("Way Big live beam: texture={:08X} colors={:08X},{:08X},{:08X},{:08X} player={} boss={} swapped={}",
+                  texture, colors[0], colors[1], colors[2], colors[3], player, boss, swapped);
+  }
+  return swapped;
+}
+
+static std::atomic<uint64_t> way_big_beam_start{0};
+constexpr uint64_t kBeamTraceFrames = 1800;
+
+void ArmWayBigBeamTrace() {
+  if (!way_big_beam_trace_enabled.load(std::memory_order_relaxed) ||
+      !final_battle_active.load(std::memory_order_relaxed)) return;
+  const auto frame = Ben10SubmittedFrames();
+  way_big_beam_start.store(frame, std::memory_order_relaxed);
+  REXLOG_INFO("Way Big beam capture: frame={}", frame);
+}
+
+void TraceWayBigBeamCommand(bool player) {
+  const auto start = way_big_beam_start.load(std::memory_order_relaxed);
+  const auto frame = Ben10SubmittedFrames();
+  if (start && frame >= start && frame - start < kBeamTraceFrames &&
+      final_battle_active.load(std::memory_order_relaxed))
+    REXLOG_INFO("Way Big beam command: role={} frame={}", player ? "player" : "AI", frame);
+}
+
+void TraceWayBigDrawSwap(uint32_t source, uint32_t target) {
+  static thread_local unsigned epoch = 0, seen = 0;
+  const auto current = final_battle_trace_epoch.load(std::memory_order_relaxed);
+  if (current != epoch) {
+    epoch = current;
+    seen = 0;
+  }
+  const unsigned bit = source == 0x288341a8 ? 1 : 2;
+  if (!(seen & bit)) {
+    seen |= bit;
+    REXLOG_INFO("Way Big draw swap: pass={} {:08X} -> {:08X}", current, source, target);
+  }
+}
+
+void TraceWayBigResource(uint32_t id, uint32_t caller, bool template_lookup) {
+  if (!final_battle_trace_enabled.load(std::memory_order_relaxed)) return;
+  if (template_lookup ? (id != 0x288341a8 && id != 0x83cd783e)
+                      : (id != 0x232235c2 && id != 0x5938d464)) return;
+  static thread_local std::unordered_set<uint64_t> sites;
+  if (sites.size() < 128 && sites.insert((uint64_t(id) << 32) | caller).second)
+    REXLOG_INFO("Way Big resource: {} id={:08X} caller={:08X}",
+                template_lookup ? "template" : "texture bind", id, caller);
+}
+
+static void TraceWayBigStack(const char* event, uint32_t id, uint32_t caller,
+                            uint32_t stack, const uint8_t* base) {
+  static thread_local std::unordered_set<uint64_t> sites;
+  if (sites.size() >= 64 || !sites.insert((uint64_t(id) << 32) | caller).second) return;
+  auto read = [base](uint32_t guest, uint32_t& value) {
+    if (!guest || (guest & 3) || guest >= 0xe0000000u) return false;
+    const auto* address = base + guest;
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(address, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) ||
+        address + sizeof(value) > static_cast<const uint8_t*>(info.BaseAddress) + info.RegionSize)
+      return false;
+    std::memcpy(&value, address, sizeof(value));
+    value = std::byteswap(value);
+    return true;
+  };
+  std::array<uint32_t, 4> returns{};
+  for (auto& address : returns) {
+    uint32_t parent = 0;
+    if (!read(stack, parent) || parent <= stack || parent - stack > 65536 ||
+        !read(parent - 8, address)) break;
+    stack = parent;
+  }
+  REXLOG_INFO("Way Big {}: id={:08X} caller={:08X} stack={:08X},{:08X},{:08X},{:08X}",
+              event, id, caller, returns[0], returns[1], returns[2], returns[3]);
+}
+
+void TraceWayBigLoad(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base) {
+  if (final_battle_trace_enabled.load(std::memory_order_relaxed) &&
+      (id == 0x288341a8 || id == 0x83cd783e))
+    TraceWayBigStack("loader", id, caller, stack, base);
+}
+
+void TraceWayBigDraw(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base) {
+  if (final_battle_trace_enabled.load(std::memory_order_relaxed) &&
+      (id == 0x232235c2 || id == 0x5938d464))
+    TraceWayBigStack("draw", id, caller, stack, base);
+  if (!way_big_beam_trace_enabled.load(std::memory_order_relaxed) ||
+      !final_battle_active.load(std::memory_order_relaxed)) return;
+  switch (id) {
+    case 0xf273c4c5: case 0x81e80184: case 0x547ee6d8:
+    case 0xb5d3be15: case 0xbbfde535: case 0xcf13ed75:
+      TraceWayBigStack("beam draw", id, caller, stack, base);
+  }
+}
+
+void TraceWayBigBeamEffect(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base) {
+  if (!way_big_beam_trace_enabled.load(std::memory_order_relaxed)) return;
+  switch (id) {
+    case 0x49b24742: case 0x5d25a1be: case 0x402aa7ae:
+    case 0x312d76f1: case 0x4741748c: case 0x6ac8e646:
+      TraceWayBigStack("beam effect", id, caller, stack, base);
+  }
+}
 
 namespace {
 constexpr uint32_t kSpritePage = 16384;
@@ -247,7 +414,8 @@ inline std::vector<Texture> ReadPack(const std::filesystem::path& path) {
   file.read(reinterpret_cast<char*>(&count), sizeof(count));
   const std::string_view version(magic, sizeof(magic));
   if (!file || (version != std::string_view("ALBD\2\0\0\0", 8) &&
-                version != std::string_view("ALBD\3\0\0\0", 8)) ||
+                version != std::string_view("ALBD\3\0\0\0", 8) &&
+                version != std::string_view("ALBD\4\0\0\0", 8)) ||
       !count || count > 32) return {};
   std::vector<Texture> textures;
   for (uint32_t i = 0; i < count; ++i) {
@@ -411,7 +579,7 @@ int WorldPromptFace(rex::memory::Memory& mem, uint32_t base, uint32_t blocks) {
 
 template<int Pack>
 void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
-               uint32_t& base_word, uint32_t& mip_word) {
+               uint32_t& base_word, uint32_t& mip_word, bool beam_shaft = false) {
   const uint32_t format = base_word & 63;
   const auto key = albedo_hud::texture_key;
   const uint32_t width = (size & 8191) + 1, height = ((size >> 13) & 8191) + 1;
@@ -490,10 +658,14 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
     // mip upload can differ from the original archive, so use that identity
     // together with the exact fetch dimensions and format.
     const bool menu_trim = item.key == 0xa57fdd41 || item.key == 0x8f250b9a;
-    const bool matching_key = (Pack != 0 || menu_trim) && key == item.key;
+    const bool boss_hud = item.key == 0xa393f51a;
+    if (boss_hud && !final_battle_active.load(std::memory_order_relaxed)) continue;
+    const bool shaft_item = item.key == kPlayerBeamShaft || item.key == kBossBeamShaft;
+    if (shaft_item != beam_shaft || (shaft_item && key != item.key)) continue;
+    const bool matching_key = (Pack != 0 || menu_trim || boss_hud || shaft_item) && key == item.key;
     // The stock menu also binds these textures without their mip pages.
     const bool bezel = item.key == 0xc8c35802;
-    const bool base_only = !mip && (Pack != 0 || menu_trim || bezel || item.key == 0xe9c69775);
+    const bool base_only = !mip && (Pack != 0 || menu_trim || bezel || boss_hud || item.key == 0xe9c69775);
     if (item.width != width || item.height != height || item.format != format ||
         item.base_size != base_size || (!matching_key && item.prefix_hash != prefix) ||
         (!base_only && (item.mip_size != 0) != (mip != 0))) continue;
@@ -543,7 +715,59 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
 void Apply(uint32_t flags, uint32_t size, uint32_t& base_word, uint32_t& mip_word) {
   auto* mem = memory.load(std::memory_order_acquire);
   if (!mem) return;
-  if (albedo_hud::enabled.load(std::memory_order_relaxed))
+  if (way_big_beam_trace_enabled.load(std::memory_order_relaxed) &&
+      final_battle_active.load(std::memory_order_relaxed)) {
+    const auto start = way_big_beam_start.load(std::memory_order_relaxed);
+    const auto frame = Ben10SubmittedFrames();
+    const auto key = albedo_hud::texture_key;
+    if (start && key && frame >= start && frame - start < kBeamTraceFrames) {
+      static thread_local uint64_t capture = 0, bucket = 0;
+      static thread_local std::unordered_set<uint32_t> keys;
+      const auto next_bucket = (frame - start) / 30;
+      if (capture != start || bucket != next_bucket) {
+        capture = start;
+        bucket = next_bucket;
+        keys.clear();
+      }
+      if (keys.size() < 768 && keys.insert(key).second)
+        REXLOG_INFO("Way Big beam bind: frame={} key={:08X}", frame, key);
+    }
+  }
+  if (final_battle_trace_enabled.load(std::memory_order_relaxed) &&
+      final_battle_active.load(std::memory_order_relaxed)) {
+    const uint32_t format = base_word & 63;
+    const uint32_t width = (size & 8191) + 1, height = ((size >> 13) & 8191) + 1;
+    const uint32_t page = base_word & kPageMask;
+    if (page && (flags & 0x80000000) && (format == 18 || format == 20) &&
+        width >= 32 && height >= 32 && width <= 1024 && height <= 1024 &&
+        !(width & (width - 1)) && !(height & (height - 1))) {
+      const auto epoch = final_battle_trace_epoch.load(std::memory_order_relaxed);
+      static thread_local unsigned last_epoch = 0;
+      static thread_local std::unordered_set<uint64_t> traced;
+      if (last_epoch != epoch) {
+        traced.clear();
+        last_epoch = epoch;
+      }
+      const uint32_t bytes = ((width + 127) / 128) * ((height + 127) / 128) *
+                             (format == 20 ? 16384 : 8192);
+      if (traced.size() < 2048 && bytes <= 0x20000000u - page &&
+          traced.insert((uint64_t(page) << 32) | base_word).second &&
+          Readable(*mem, page, bytes)) {
+        const auto* source = mem->TranslatePhysical(page);
+        const auto hash = Fingerprint(source + bytes / 2, 64,
+                                      Fingerprint(source + bytes / 4, 64));
+        REXLOG_INFO("Way Big texture: pass={} Albedo={} frame={} key={:08X} {}x{} format={} sample={:016X}",
+                    epoch, albedo_hud::enabled.load(std::memory_order_relaxed), Ben10SubmittedFrames(),
+                    albedo_hud::texture_key, width, height, format, hash);
+      }
+    }
+  }
+  const auto key = albedo_hud::texture_key;
+  if (key == kPlayerBeamShaft || key == kBossBeamShaft) {
+    if (final_battle_active.load(std::memory_order_relaxed) &&
+        way_big_beam_swapped[key == kPlayerBeamShaft].load(std::memory_order_relaxed))
+      ApplyPack<0>(mem, flags, size, base_word, mip_word, true);
+  } else if (albedo_hud::enabled.load(std::memory_order_relaxed))
     ApplyPack<0>(mem, flags, size, base_word, mip_word);
   if (button_icon_preview_path.empty() && keyboard_icon_path.empty()) return;
   auto mode = button_icons.load(std::memory_order_relaxed);

@@ -1,5 +1,13 @@
 [English](#english) | [Português (Brasil)](#portugues)
 
+# Cosmic Recomp Alpha 8.1
+
+- Toggle **Play as Albedo** in the final fight and resume to swap Way Big appearances. Green beams follow Ben and red beams follow Evil Way Big.
+- Ben’s boss portrait now shows the Potis Altiare badge in sharper detail. The boss health bar remains yellow.
+- Restored the tested Alpha 8 graphics profile and fixed final-fight pause behavior, button prompts, and enhanced cinematic subtitle matching.
+
+The local test build was confirmed in-game. Installer testing is pending.
+
 <a id="english"></a>
 # Cosmic Recomp Alpha 0.4.0-alpha.4 — stability and accumulated optimizations
 

@@ -102,6 +102,10 @@ inline void ToggleAlbedoHud(PPCContext& ctx,uint8_t* base) {
     const bool next=!ben10::albedo_hud::enabled.load(std::memory_order_relaxed);
     SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","albedo_hud_preview",next?"on":"off");
     ben10::albedo_hud::enabled.store(next,std::memory_order_relaxed);
+    ben10::albedo_textures::ArmWayBigBeamTrace();
+    if (ben10::albedo_textures::final_battle_active.load() &&
+        ben10::albedo_textures::final_battle_trace_enabled.load())
+      ++ben10::albedo_textures::final_battle_trace_epoch;
     REXLOG_INFO("Cosmic Gameplay: Albedo HUD preview {}",next?"ON":"OFF");
   }catch(const std::exception& error){REXLOG_ERROR("Cosmic Albedo HUD settings: {}",error.what());}
 }
@@ -153,6 +157,11 @@ inline void ReturnVoid(PPCContext& ctx,uint8_t* base) {
 template<int Level> void PresenceLevel(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   const char* levels[]={"menus","l_chin","l_mili","l_pari","l_romd","l_romn","l_rush","l_tokd","l_tokn"};
+  ben10::albedo_textures::final_battle_active.store(Level == 7);
+  if constexpr (Level == 7) {
+    if (ben10::albedo_textures::final_battle_trace_enabled.load())
+      ++ben10::albedo_textures::final_battle_trace_epoch;
+  }
   ben10_presence::Publish(levels[Level]);
 }
 inline void QuitToLauncher(PPCContext& ctx, uint8_t* base) {
@@ -664,8 +673,19 @@ inline void OnFrame() {
       if(line=="albedo_hud_preview=on")ben10::albedo_hud::enabled=true;
       if(line=="albedo_hud_preview=off")ben10::albedo_hud::enabled=false;
     }}
+  std::error_code trace_marker_error;
+  if (std::filesystem::is_regular_file(host->user_data_root()/"way-big-texture-trace.txt", trace_marker_error)) {
+    ben10::albedo_textures::final_battle_trace_enabled.store(true);
+    REXLOG_INFO("Way Big texture trace enabled");
+  }
+  ben10::albedo_textures::way_big_launch_albedo.store(ben10::albedo_hud::enabled.load());
+  if (std::filesystem::is_regular_file(host->user_data_root()/"way-big-beam-trace.txt", trace_marker_error)) {
+    ben10::albedo_textures::way_big_beam_trace_enabled.store(true);
+    REXLOG_INFO("Way Big beam trace enabled");
+  }
   add("cosmic_all_aliens_page",AllAliensPage);
-  if(std::getenv("BEN10_DISCORD_STATUS_FILE")) {
+  if(std::getenv("BEN10_DISCORD_STATUS_FILE") || ben10::albedo_textures::final_battle_trace_enabled.load() ||
+     ben10::albedo_textures::way_big_beam_trace_enabled.load()) {
     add("cosmic_presence_menus",PresenceLevel<0>);
     add("cosmic_presence_l_chin",PresenceLevel<1>);
     add("cosmic_presence_l_mili",PresenceLevel<2>);

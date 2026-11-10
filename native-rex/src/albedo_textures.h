@@ -15,6 +15,20 @@ enum class ButtonIcons { Auto, Xbox, PlayStation, Keyboard };
 extern std::atomic<ButtonIcons> button_icons;
 extern std::filesystem::path keyboard_icon_path;
 extern std::filesystem::path prompt_sprite_path;
+extern std::atomic<bool> final_battle_trace_enabled;
+extern std::atomic<bool> final_battle_active;
+extern std::atomic<unsigned> final_battle_trace_epoch;
+extern std::atomic<bool> way_big_launch_albedo;
+extern std::atomic<bool> way_big_beam_trace_enabled;
+void SetWayBigBeamAppearance(bool player, bool swapped);
+bool SwapWayBigBeamTint(uint32_t texture, const std::array<uint32_t, 4>& colors);
+void ArmWayBigBeamTrace();
+void TraceWayBigBeamCommand(bool player);
+void TraceWayBigDrawSwap(uint32_t source, uint32_t target);
+void TraceWayBigResource(uint32_t id, uint32_t caller, bool template_lookup);
+void TraceWayBigLoad(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base);
+void TraceWayBigDraw(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base);
+void TraceWayBigBeamEffect(uint32_t id, uint32_t caller, uint32_t stack, const uint8_t* base);
 bool HasPromptSprites();
 class PromptSpriteBind {
  public:

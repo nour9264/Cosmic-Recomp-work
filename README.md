@@ -3,6 +3,14 @@
 <a id="english"></a>
 # Cosmic Recomp
 
+## Alpha 8.1
+
+- **Play as Albedo:** Both Way Big appearances swap live when you resume the final fight. Ben fires green and Evil Way Big fires red, whichever side you play.
+- **Final boss HUD:** Restored the sharper Ben Way Big portrait with the Potis Altiare badge. The health bar stays yellow.
+- **Fixes:** Restored the Alpha 8 graphics profile, fixed final-fight pause behavior and button prompts, and improved cinematic ZIP subtitle matching.
+
+For an Alpha 8.1 build, compile both launcher bridges with `--hero-time --gpu-diagnostics --performance-alpha5 --ultimate-voices --discord-presence`. Add `--four-arms` for the optional bridge. Stage `tools/way_big_portrait.rgb` beside `prepare_albedo_textures.py` in the importer.
+
 ## Alpha 8 — Reworked Options, 120 FPS & Enhanced Cinematics
 
 - **In-game Options:** redesigned the Options hub and the Gameplay, Sound, and Video pages. Gameplay groups the standard and extras settings on one page. Video combines display, button icons, and graphics. Credits are available from the main-menu Options hub.

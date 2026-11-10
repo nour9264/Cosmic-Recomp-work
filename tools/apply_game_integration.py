@@ -376,4 +376,95 @@ if guard not in text:
     p.write_text(text.replace(entry, guard))
     changes += 1
 
+way_big_trace_hooks = {
+    'sub_821C8060': ('REX_FUNC_PROLOGUE();',
+                     'ben10::albedo_textures::TraceWayBigBeamEffect(ctx.r3.u32, uint32_t(ctx.lr), ctx.r1.u32, base);'),
+    'sub_82121BD8': ('REX_FUNC_PROLOGUE();', 'ben10::albedo_textures::TraceWayBigBeamCommand(true);'),
+    'sub_820E4DD0': ('REX_FUNC_PROLOGUE();', 'ben10::albedo_textures::TraceWayBigBeamCommand(false);'),
+    'sub_821FED60': ('REX_FUNC_PROLOGUE();',
+                     'ben10::albedo_textures::TraceWayBigLoad(ctx.r3.u32, uint32_t(ctx.lr), ctx.r1.u32, base);'),
+    'sub_82234068': ('REX_FUNC_PROLOGUE();',
+                     'ben10::albedo_textures::TraceWayBigLoad(ctx.r3.u32, uint32_t(ctx.lr), ctx.r1.u32, base);'),
+    'sub_821AF810': ('REX_FUNC_PROLOGUE();',
+                     'ben10::albedo_textures::TraceWayBigResource(ctx.r3.u32, uint32_t(ctx.lr), true);'),
+    'sub_821E5E18': ('REX_FUNC_PROLOGUE();',
+                     'ben10::albedo_textures::TraceWayBigResource(ctx.r4.u32, uint32_t(ctx.lr), true);'),
+    'sub_824388E8': ('REX_FUNC_PROLOGUE();',
+                     'const uint32_t way_big_caller = uint32_t(ctx.lr), way_big_stack = ctx.r1.u32;'),
+}
+for name, p in locate_functions(args.generated, way_big_trace_hooks).items():
+    text = p.read_text()
+    start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    anchor, trace = way_big_trace_hooks[name]
+    if trace in body:
+        continue
+    if name == 'sub_824388E8':
+        # Upgrade the earlier caller-only trace in already integrated builds.
+        old_entry = '\n\tconst uint32_t way_big_caller = uint32_t(ctx.lr);'
+        old_bind = ('\n\t\tben10::albedo_textures::TraceWayBigResource('
+                    'ben10::albedo_hud::texture_key, way_big_caller, false);')
+        body = body.replace(old_entry, '').replace(old_bind, '')
+    if body.count(anchor) != 1:
+        raise RuntimeError(f'Unexpected Way Big trace site in {name}')
+    body = body.replace(anchor, anchor + '\n\t' + trace)
+    if name == 'sub_824388E8':
+        bind = 'ben10::albedo_hud::TextureBind texture(REX_LOAD_U32(ctx.r1.u32 + 140));'
+        if body.count(bind) != 1:
+            raise RuntimeError('Unexpected Way Big texture bind site')
+        body = body.replace(bind, bind + '\n\t\tben10::albedo_textures::TraceWayBigDraw('
+                            'ben10::albedo_hud::texture_key, way_big_caller, way_big_stack, base);')
+    header = '#include "../../src/albedo_textures.h"\n'
+    p.write_text((header if header not in text else '') + text[:start] + body + text[end:])
+    changes += 1
+
+name = 'sub_82201640'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+if 'ben10::way_big::DrawModel' not in body:
+    anchor = 'ctx.lr = 0x822016D0;\n\tsub_82234570(ctx, base);'
+    if body.count(anchor) != 1:
+        raise RuntimeError('Unexpected Way Big skinned draw model read')
+    body = body.replace(anchor, 'ben10::way_big::DrawModel(ctx, base);\n\t' + anchor)
+    header_end = text.index('\n', text.index('#include "ben10_funcs.')) + 1
+    text = text[:start] + body + text[end:]
+    p.write_text(text[:header_end] + '#include "../../src/way_big_draw_swap.h"\n' + text[header_end:])
+    changes += 1
+
+name = 'sub_821F2FD0'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+old_beam_guard = ('ben10::albedo_textures::way_big_beam_palette_test.load(std::memory_order_relaxed) &&\n'
+                  '\t    ')
+if old_beam_guard in body:
+    body = body.replace(old_beam_guard, '')
+    p.write_text(text[:start] + body + text[end:])
+    changes += 1
+if 'SwapWayBigBeamTint' not in body:
+    anchor = 'ctx.lr = 0x821F38BC;\n\tsub_82439168(ctx, base);'
+    if body.count(anchor) != 1:
+        raise RuntimeError('Unexpected Way Big beam vertex color call')
+    hook = ('if (ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed) &&\n'
+            '\t    ben10::albedo_textures::SwapWayBigBeamTint(REX_LOAD_U32(ctx.r31.u32 + 268),\n'
+            '\t      {REX_LOAD_U32(ctx.r31.u32 + 136), REX_LOAD_U32(ctx.r31.u32 + 140),\n'
+            '\t       REX_LOAD_U32(ctx.r31.u32 + 144), REX_LOAD_U32(ctx.r31.u32 + 148)}))\n'
+            '\t    std::swap(ctx.f1.u64, ctx.f2.u64);\n\t')
+    header = '#include "../../src/albedo_textures.h"\n'
+    p.write_text((header if header not in text else '') + text[:start] +
+                 body.replace(anchor, hook + anchor) + text[end:])
+    changes += 1
+
 print('PC integration applied to',changes,'locally generated functions.')

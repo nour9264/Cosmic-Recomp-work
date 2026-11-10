@@ -130,9 +130,12 @@ namespace CosmicRecompi {
             bool hasFourArms = File.Exists(fourArms);
             if (File.Exists(target)) {
                 using (var reader = new BinaryReader(File.OpenRead(target))) {
-                    if (reader.BaseStream.Length > 12 &&
-                        reader.ReadUInt64() == 0x0000000344424c41UL &&
-                        reader.ReadUInt32() == (hasFourArms ? 29u : 28u)) return;
+                    // The revised pack starts with the watch. Check this as well
+                    // as the count to reject legacy packs with the same count.
+                    if (reader.BaseStream.Length >= 16 &&
+                        reader.ReadUInt64() == 0x0000000444424c41UL &&
+                        reader.ReadUInt32() == (hasFourArms ? 31u : 30u) &&
+                        reader.ReadUInt32() == 0x14934253u) return;
                 }
             }
             string temporary = target + ".new";
@@ -152,6 +155,43 @@ namespace CosmicRecompi {
             if (File.Exists(target)) File.Replace(temporary, target, null);
             else File.Move(temporary, target);
         }
+        internal static bool SetWayBigModels(byte[] characters, bool albedo) {
+            const int player = 0x110bc, boss = 0x10ed8;
+            byte[] benModel = { 0x28, 0x83, 0x41, 0xa8 };
+            byte[] evilModel = { 0x83, 0xcd, 0x78, 0x3e };
+            if (!MatchesAt(characters, 0x11098, Encoding.ASCII.GetBytes("character_waybig\0")) ||
+                !MatchesAt(characters, 0x10eb4, Encoding.ASCII.GetBytes("character_evil_waybig\0")))
+                return false;
+            bool original = MatchesAt(characters, player, benModel) && MatchesAt(characters, boss, evilModel);
+            bool swapped = MatchesAt(characters, player, evilModel) && MatchesAt(characters, boss, benModel);
+            if (albedo ? !original : !swapped) return false;
+            Buffer.BlockCopy(albedo ? evilModel : benModel, 0, characters, player, 4);
+            Buffer.BlockCopy(albedo ? benModel : evilModel, 0, characters, boss, 4);
+            return true;
+        }
+
+        static bool MatchesAt(byte[] bytes, int offset, byte[] expected) {
+            if (bytes.Length < offset + expected.Length) return false;
+            for (int i = 0; i < expected.Length; i++)
+                if (bytes[offset + i] != expected[i]) return false;
+            return true;
+        }
+
+        static void PrepareWayBigModels(string folder, string diagnostics) {
+            string path = Path.Combine(folder, "game", "global", "scripts", "char.ddf");
+            if (!File.Exists(path)) return;
+            string settings = Path.Combine(folder, "user", "pc-gameplay.ini");
+            bool albedo = File.Exists(settings) &&
+                Array.IndexOf(File.ReadAllLines(settings), "albedo_hud_preview=on") >= 0;
+            byte[] characters = File.ReadAllBytes(path);
+            if (!SetWayBigModels(characters, albedo)) return;
+            string pending = path + ".way-big-new";
+            File.WriteAllBytes(pending, characters);
+            File.Replace(pending, path, null);
+            File.AppendAllText(diagnostics, albedo ? "Way Big: Albedo models selected.\r\n" :
+                "Way Big: original models restored.\r\n");
+        }
+
         public static Process Start(string root, bool uncapped, string returnToLauncherEvent = null, Action prepareGameMenu = null, Action<ProcessStartInfo> configureProcess = null) {
             string diagnostics=LauncherLog(root);
             try {
@@ -173,6 +213,9 @@ namespace CosmicRecompi {
             try {
             if (prepareGameMenu != null) prepareGameMenu();
             PrepareAlbedo(root, folder);
+#if COSMIC_DISCORD_PRESENCE
+            PrepareWayBigModels(folder, diagnostics);
+#endif
             string log = Path.Combine(folder, "logs", "runtime.log").Replace('\\', '/');
             string resolution = "720p", frameLimit = "30",fullscreen="false";
             string graphicsPreset = "default", sharpening = "original", screenBloom = "original";
