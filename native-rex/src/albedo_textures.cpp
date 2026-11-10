@@ -34,6 +34,7 @@ struct Sprite {
   uint32_t physical_address = 0;
 };
 std::array<Sprite, 16> sprites;
+int WorldPromptFace(rex::memory::Memory& mem, uint32_t base);
 
 const std::vector<uint8_t>& SpritePixels() {
   static const auto pixels = [] {
@@ -91,10 +92,22 @@ PromptSpriteBind::~PromptSpriteBind() {
 }
 
 bool BindPromptSprite(uint32_t& flags, uint32_t& size, uint32_t& base_word, uint32_t& mip_word) {
-  if (prompt_sprite < 0 || (flags & 3) != 2 || ((mip_word >> 9) & 3) != 1) return false;
+  if ((flags & 3) != 2 || ((mip_word >> 9) & 3) != 1) return false;
   auto* mem = memory.load(std::memory_order_acquire);
   if (!mem) return false;
-  auto& sprite = sprites[prompt_sprite];
+  int index = prompt_sprite;
+  if (index < 0) {
+    constexpr uint32_t size_mask = (1u << 26) - 1;
+    constexpr uint32_t size_64 = (63u << 13) | 63u;
+    if ((base_word & 63) != 20 || (size & size_mask) != size_64) return false;
+    const auto mode = button_icons.load(std::memory_order_relaxed);
+    if (mode != ButtonIcons::PlayStation && mode != ButtonIcons::Keyboard) return false;
+    const int face = WorldPromptFace(*mem, base_word & kPageMask);
+    if (face < 0 || !HasPromptSprites()) return false;
+    constexpr int playstation_faces[] = {0, 3, 1, 2};
+    index = mode == ButtonIcons::Keyboard ? 12 + face : playstation_faces[face];
+  }
+  auto& sprite = sprites[index];
   if (!sprite.virtual_address) {
     auto* heap = mem->LookupHeapByType(true, 4096);
     uint32_t address = 0;
@@ -108,15 +121,15 @@ bool BindPromptSprite(uint32_t& flags, uint32_t& size, uint32_t& base_word, uint
       return false;
     }
     std::memcpy(mem->TranslateVirtual(address),
-                SpritePixels().data() + prompt_sprite * kSpritePage, kSpritePage);
+                SpritePixels().data() + index * kSpritePage, kSpritePage);
     sprite = {address, physical};
-    REXLOG_INFO("Button Icons: prompt sprite {} ready", prompt_sprite);
+    REXLOG_INFO("Button Icons: prompt sprite {} ready", index);
   }
   flags = (flags & 0x003fffff) | 0x81000000;
   size = (127u << 13) | 127u;
   base_word = sprite.physical_address | 0x54;
   mip_word &= 0x7ff;
-  prompt_sprite_bound = true;
+  if (prompt_sprite >= 0) prompt_sprite_bound = true;
   return true;
 }
 
@@ -335,6 +348,56 @@ void PrepareButtonIconArchive(const std::filesystem::path& game, const std::file
 inline bool Readable(rex::memory::Memory& mem, uint32_t address, uint32_t size) {
   return !size || mem.GetPhysicalHeap()->QueryRangeAccess(address, address + size - 1) !=
       rex::memory::PageAccess::kNoAccess;
+}
+
+namespace {
+int WorldPromptFace(rex::memory::Memory& mem, uint32_t base) {
+  // Active BC3 blocks from the 24 standalone A/B/X/Y textures in gtex_s.xbx.
+  // Ignore padding and require a full active-image match when there is no key.
+  struct Signature { uint32_t key; uint64_t prefix, image; int face; };
+  static constexpr Signature prompts[] = {
+    {0xd82646fd, 0x825ba350b2cbbbd8ull, 0x1044ae59ed081fbcull, 0},
+    {0x5556421e, 0x1ab37128ff9d88b3ull, 0x4a3b9c3ea7aa832full, 0},
+    {0xd155d06f, 0x54e7a8f33b31b4bdull, 0xf91cc1bb963520dbull, 0},
+    {0x5e1525cf, 0x497e22050ca471b0ull, 0xa4ff047b01dcde67ull, 0},
+    {0x96f5aabf, 0x1ab37128ff9d88b3ull, 0xae058eee050cb6bfull, 0},
+    {0xec35f9df, 0x030e4c379b5a881bull, 0x280b201deb355a00ull, 0},
+    {0x56a9411e, 0xef4f9341e8d16a47ull, 0xa7f54baf9f23e57eull, 1},
+    {0x5fdad78c, 0x96e17f60f58293d9ull, 0xb1d6b3abd0504b8dull, 1},
+    {0xdbd945fd, 0xc425ac798e8ec4f4ull, 0x484f92d7dc1259a6ull, 1},
+    {0x187aad5c, 0xc425ac798e8ec4f4ull, 0x34f0dee9d66ff768ull, 1},
+    {0xd09a222c, 0x96e17f60f58293d9ull, 0x0cf891f8170fe481ull, 1},
+    {0xbbd26cfd, 0x3669db383338d74full, 0xae8d3f542be7b219ull, 2},
+    {0xf50180bf, 0xef7435499daf556dull, 0xf5ea8105e4499fa0ull, 2},
+    {0x36a2681e, 0xef7435499daf556dull, 0x152cc69f347e94b3ull, 2},
+    {0x8fc1d3df, 0x38ec5ce97c94d3a2ull, 0xf21641294e1573fcull, 2},
+    {0x3de10fcf, 0xdec7ee196a705e03ull, 0xc3fdc1ebe43aa838ull, 2},
+    {0xb2a1fa6f, 0xdec7ee196a705e03ull, 0xaafbc13881ea437full, 2},
+    {0xfa086880, 0x523b1564a4e6478bull, 0xdace4efabb049923ull, 3},
+    {0x39ab8021, 0x523b1564a4e6478bull, 0x0a59030d94ad4a90ull, 3},
+    {0xf14b0f51, 0xd80caf0ef8ade809ull, 0x65a668a7dabca745ull, 3},
+    {0x7e0bfaf1, 0xa55a00a92285c6f1ull, 0x94aec737ced00fbaull, 3},
+    {0x62bafe3c, 0x77b616248c473d3cull, 0x66480c1be61f470dull, 3},
+    {0x436bd341, 0xa4fe78a6b48f424dull, 0xa0963489595711fbull, 3},
+    {0x77786c63, 0xde19b722ad1c462eull, 0x03ece4d3030ebb07ull, 3},
+  };
+  const auto key = albedo_hud::texture_key;
+  for (const auto& prompt : prompts)
+    if (prompt.key == key) return prompt.face;
+  if (!base || base > 0x20000000 - kSpritePage || !Readable(mem, base, kSpritePage)) return -1;
+  const auto* source = mem.TranslatePhysical(base);
+  const auto prefix = Fingerprint(source + IconBlockOffset(8, 6), 16,
+                                  Fingerprint(source + IconBlockOffset(8, 8), 16));
+  if (std::none_of(std::begin(prompts), std::end(prompts),
+                   [prefix](const Signature& prompt) { return prompt.prefix == prefix; })) return -1;
+  uint64_t image = 14695981039346656037ull;
+  for (uint32_t y = 0; y < 16; ++y)
+    for (uint32_t x = 0; x < 16; ++x)
+      image = Fingerprint(source + IconBlockOffset(x, y), 16, image);
+  for (const auto& prompt : prompts)
+    if (prompt.prefix == prefix && prompt.image == image) return prompt.face;
+  return -1;
+}
 }
 
 template<int Pack>
