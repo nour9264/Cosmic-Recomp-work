@@ -18,9 +18,12 @@
 #include "replay_input.h"
 #include "performance_overlay.h"
 #include "pc_menu_bridge.h"
+#include "options_video_preview.h"
 #include "albedo_textures.h"
 #include "game_fault_probe.h"
 #include "diagnostic_paths.h"
+#include "cinematic_player.h"
+#include "cinematic_subtitles.h"
 #include <rex/input/input_system.h>
 #include <rex/system/achievement_manager.h>
 
@@ -30,14 +33,42 @@ class Ben10App : public rex::ReXApp {
 
   void OnConfigureFonts(ImFontAtlas* atlas) override {
     if(!ben10_pc_menu::enabled())return;
+    const auto user=std::filesystem::current_path()/"user";
+    const char* preview=std::getenv("BEN10_OPTIONS_VIDEO_PREVIEW");
+    const bool preview_enabled=(preview && std::strcmp(preview,"1")==0) ||
+                               std::filesystem::exists(user/"options-video-preview");
+    if(!preview_enabled)return;
     char windows[MAX_PATH]{};
     if(GetWindowsDirectoryA(windows,MAX_PATH)) {
-      const auto font=std::filesystem::path(windows)/"Fonts/segoeui.ttf";
-      if(std::filesystem::exists(font))pc_video_font_=atlas->AddFontFromFileTTF(font.string().c_str(),19);
+      const auto fonts=std::filesystem::path(windows)/"Fonts";
+      const auto italic=fonts/"segoeuiz.ttf";
+      const auto font=std::filesystem::exists(italic)?italic:fonts/"segoeuib.ttf";
+      // One baked face at a higher resolution. UI draws only transform quads.
+      if(std::filesystem::exists(font))pc_video_font_=atlas->AddFontFromFileTTF(font.string().c_str(),42);
+    }
+    constexpr int size=128, bytes=size*size*4;
+    std::vector<unsigned char> badge(bytes*2);
+    std::ifstream file(user/"options-ultimatrix.rgba",std::ios::binary);
+    if(file.read(reinterpret_cast<char*>(badge.data()),badge.size()) && file.peek()==EOF) {
+      for(auto& id:options_badges_)id=atlas->AddCustomRect(size,size);
+      unsigned char* pixels=nullptr;int width=0,height=0;
+      atlas->GetTexDataAsRGBA32(&pixels,&width,&height);
+      for(int i=0;i<2;++i) {
+        ImFontAtlasRect rect;
+        if(pixels && atlas->GetCustomRect(options_badges_[i],&rect))
+          for(int y=0;y<size;++y)
+            std::memcpy(pixels+((rect.y+y)*width+rect.x)*4,badge.data()+i*bytes+y*size*4,size*4);
+      }
     }
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    std::ifstream preference(user_data_root() / "enhanced-subtitles.txt");
+    std::string subtitle_mode;
+    preference >> subtitle_mode;
+    if (subtitle_mode != "off")
+      cinematic_subtitles_ = std::make_unique<Ben10CinematicSubtitles>(drawer);
+    if(ben10_pc_menu::enabled())options_video_=std::make_unique<ben10_options::VideoPage>(drawer,pc_video_font_,options_badges_);
     // Profiling/replay tools keep their own measurements; ordinary play gets
     // a passive overlay driven by the original game's swap counter.
     if((!std::getenv("BEN10_REPLAY_INPUT_PATH") || std::getenv("BEN10_TEST_PERFORMANCE_OVERLAY")) && !std::getenv("BEN10_HIDE_PERFORMANCE_OVERLAY"))
@@ -283,9 +314,20 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
-    window()->SetTitle("Cosmic Recomp Alpha 7.1 (community)");
+    window()->SetTitle("Cosmic Recomp Alpha 8 (community)");
 #ifdef _WIN32
-    SetCosmicWindowIcon(static_cast<HWND>(window()->GetNativeWindowHandle()));
+    auto* handle = window()->GetNativeWindowHandle();
+    SetCosmicWindowIcon(static_cast<HWND>(handle));
+    std::ifstream cinematic_preference(user_data_root() / "enhanced-cinematics.txt");
+    std::string cinematic_mode;
+    if (cinematic_preference >> cinematic_mode && cinematic_mode == "on") {
+      auto* graphics = runtime()->graphics_system();
+      const char* backend = std::getenv("BEN10_GRAPHICS_BACKEND");
+      if (graphics && backend && std::string_view(backend) == "d3d12") {
+        ben10::cinematic_player::Attach(handle, runtime()->input_system(), graphics->presenter(),
+            user_data_root().parent_path() / "cinematics");
+      }
+    }
 #endif
     ben10_fault_probe::Install();
     for(uint32_t address : {0x8210BB88u,0x8229A9F8u,0x8229AA20u,0x8229AA48u,
@@ -330,8 +372,8 @@ class Ben10App : public rex::ReXApp {
         ben10_pc_menu::ApplyPresentation(window(),ben10_pc_menu::DisplayMode(path),ben10_pc_menu::ResolutionIndex(path));
       }
       auto* input=static_cast<rex::input::InputSystem*>(runtime()->input_system());
-      input->SetActiveCallback([this] {
-        return !imgui_drawer()->GetIO().WantCaptureMouse;
+      input->SetActiveCallback([] {
+        return ben10_pc_video::polling_options || (!ben10_pc_video::CapturesGameInput() && !ben10_options::mouse_captured.load(std::memory_order_relaxed));
       });
     }
     if (const char* hidden=std::getenv("BEN10_TEST_HIDDEN")) {
@@ -442,14 +484,19 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+#ifdef _WIN32
+    auto* graphics = runtime() ? runtime()->graphics_system() : nullptr;
+    ben10::cinematic_player::Detach(graphics ? graphics->presenter() : nullptr);
+#endif
     ben10::albedo_textures::memory.store(nullptr,std::memory_order_release);
     ben10_pc_video::visible=false;
     ben10_pc_video::release_guard=false;
     if(ben10_pc_video::closed_event)SetEvent(ben10_pc_video::closed_event);
-    pc_video_menu_.reset();
     ben10_pc_menu::window=nullptr;
     ben10_pc_menu::runtime=nullptr;
+    options_video_.reset();
     performance_overlay_.reset();
+    cinematic_subtitles_.reset();
     if (capture_worker_.joinable()) { capture_worker_.request_stop();capture_worker_.join(); }
   }
 
@@ -472,8 +519,10 @@ class Ben10App : public rex::ReXApp {
   // void OnShutdown() override {}
   // void OnConfigurePaths(rex::PathConfig& paths) override {}
  private:
+  std::unique_ptr<ben10_options::VideoPage> options_video_;
   ImFont* pc_video_font_=nullptr;
-  std::unique_ptr<ben10_pc_video::Dialog> pc_video_menu_;
+  std::array<ImFontAtlasRectId,2> options_badges_{ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid};
   std::unique_ptr<Ben10PerformanceOverlay> performance_overlay_;
+  std::unique_ptr<Ben10CinematicSubtitles> cinematic_subtitles_;
   std::jthread capture_worker_;
 };

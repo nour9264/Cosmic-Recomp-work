@@ -7,6 +7,7 @@
 #include <fstream>
 #include "performance_visibility.h"
 #include "memory_metrics.h"
+#include "cinematic_player.h"
 
 // Uses the SDK's existing UI renderer. Never generates independent UI frames.
 class Ben10PerformanceOverlay final : public rex::ui::ImGuiDialog {
@@ -18,7 +19,23 @@ class Ben10PerformanceOverlay final : public rex::ui::ImGuiDialog {
     if(!ben10::performance_visible.load(std::memory_order_relaxed))return;
     const auto now=std::chrono::steady_clock::now();
     const bool refreshed=now-last_refresh_>=std::chrono::milliseconds(250);
+    const bool cinematic = ben10::cinematic_player::Playing();
+    if (cinematic != cinematic_visible_) {
+      cinematic_visible_ = cinematic;
+      cinematic_frames_ = ben10::cinematic_player::SubmittedFrames();
+      cinematic_refresh_ = now;
+      cinematic_fps_ = 0;
+    }
     if(refreshed) {
+      if (cinematic) {
+        const auto frames = ben10::cinematic_player::SubmittedFrames();
+        const auto seconds = std::chrono::duration<double>(now - cinematic_refresh_).count();
+        if (seconds >= .2) {
+          cinematic_fps_ = (frames - cinematic_frames_) / seconds;
+          cinematic_frames_ = frames;
+          cinematic_refresh_ = now;
+        }
+      }
       stats_=Ben10ReadFrameStats();last_refresh_=now;
       memory_.Refresh();
     }
@@ -28,6 +45,7 @@ class Ben10PerformanceOverlay final : public rex::ui::ImGuiDialog {
       ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_AlwaysAutoResize|
       ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoNav;
     if(ImGui::Begin("Game performance",nullptr,flags)) {
+      if(cinematic) ImGui::Text("Cinematic FPS: %.1f", cinematic_fps_);
       ImGui::Text("Game FPS: %.1f",stats_.fps);
       ImGui::Text("Frame time: %.2f ms | p95: %.2f ms",stats_.latest_ms,stats_.p95_ms);
       constexpr double MiB=1024.0*1024.0;
@@ -68,6 +86,10 @@ class Ben10PerformanceOverlay final : public rex::ui::ImGuiDialog {
     ImGui::End();
   }
  private:
+  bool cinematic_visible_ = false;
+  double cinematic_fps_ = 0;
+  uint64_t cinematic_frames_ = 0;
+  std::chrono::steady_clock::time_point cinematic_refresh_{};
   Ben10FrameStats stats_{};
   Ben10MemoryMetrics memory_{};
   std::chrono::steady_clock::time_point last_refresh_{};

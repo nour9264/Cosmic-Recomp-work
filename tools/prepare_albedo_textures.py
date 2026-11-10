@@ -126,6 +126,9 @@ def prepare(originals, output, four_arms=None):
         ('global/g_usm.xbx', 256, 0xa8e7b9b8, 'alien'),
         ('global/g_usm.xbx', 256, 0xef47c368, 'alien'),  # Face and eyes, separate from the badge.
         ('l_tokd/l_tokd_t.xbx', 0, 0x232235c2, 'alien'),
+        ('global/global.xbx', 256, 0xc8c35802, 'menu_trim'),
+        ('global/global.xbx', 256, 0xa57fdd41, 'menu_trim'),
+        ('global/global.xbx', 256, 0x8f250b9a, 'menu_trim'),
         ('global/global.xbx', 256, 0xe9c69775, 'flash'),
         ('global/global.xbx', 256, 0x17dd02a0, 'flash'),
     )
@@ -139,7 +142,8 @@ def prepare(originals, output, four_arms=None):
         record = table((originals / archive).read_bytes()[offset:])[key]
         fmt, width, height = struct.unpack_from('>HHH', record, 4)
         compression = {0x90434000: 18, 0xa0848000: 20}.get(struct.unpack_from('>I', record)[0])
-        if fmt not in (0x11c, 0x104) or compression is None or any(n < 32 or n > 1024 or n & (n - 1) for n in (width,height)):
+        valid_format = fmt in (0x11c, 0x104) or (kind == 'menu_trim' and fmt == 0x102)
+        if not valid_format or compression is None or any(n < 32 or n > 1024 or n & (n - 1) for n in (width,height)):
             raise ValueError(f'Unsupported Albedo texture {key:08x}')
         payload = record[128:]
         if kind == 'flash':

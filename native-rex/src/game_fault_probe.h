@@ -12,7 +12,8 @@ inline LONG CALLBACK Handler(EXCEPTION_POINTERS* exception) {
   const auto address=exception->ExceptionRecord->ExceptionInformation[1];
   // The experiment's bad guest pointers fall in an unmapped virtual interval.
   // Do not report the SDK's ordinary protected physical-page notifications.
-  const bool low_guest=address>=0x100000000ULL && address<0x100010000ULL;
+  const bool low_guest=(address>=0x100000000ULL && address<0x100010000ULL) ||
+      (address>=0x200000000ULL && address<0x200010000ULL);
   const bool invalid_guest=address>=0x130000000ULL && address<0x180000000ULL;
   if(!low_guest && !invalid_guest)return EXCEPTION_CONTINUE_SEARCH;
   static thread_local bool reporting=false;if(reporting)return EXCEPTION_CONTINUE_SEARCH;

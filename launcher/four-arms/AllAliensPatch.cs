@@ -202,6 +202,390 @@ namespace CosmicRecompi {
                 0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),0x00000217,Crc("cosmic_toggle_all_aliens"),0x01050020,1,0x21})});
             return Pack(rows);
         }
+        internal static byte[] SettingsPreview(byte[] original,byte[] preview) {
+            var stock=Parse(original);
+            var rows=Parse(preview);
+            var gameplay=stock.Find(r=>r.Id==Crc("GameplayMenu_Enter"));
+            var target=rows.Find(r=>r.Id==Crc("GameplayMenu_Enter"));
+            var input=rows.Find(r=>r.Id==0x3b77a27e);
+            var sound=rows.Find(r=>r.Id==Crc("SoundMenu_Enter"));
+            if(gameplay==null || target==null || input==null || sound==null ||
+               gameplay.Code.Length!=241*4 || Read(gameplay.Code,123*4)!=0x00000507 ||
+               Read(gameplay.Code,124*4)!=0x77f62458 ||
+               Read(input.Code,0)!=0x001e0017 || Read(input.Code,12)!=0x40400000 ||
+               Read(sound.Code,0)!=0x00000803 || Read(sound.Code,4)!=0x3f000000)
+                throw new InvalidDataException("Unexpected original settings layout.");
+
+            // Keep the original camera, vibration and menu callbacks. Put the
+            // extra toggles and the confirmed reset after those stock rows.
+            var additions=new Injection();
+            foreach(string[] row in new[]{
+                new[]{"cosmic_all_aliens_label","cosmic_all_aliens_enabled","CosmicToggleAllAliens"},
+                new[]{"cosmic_hero_label","cosmic_hero_enabled","CosmicToggleHeroTime"},
+                new[]{"cosmic_albedo_hud_label","cosmic_albedo_hud_enabled","CosmicToggleAlbedoHud"}}) {
+                additions.Add(0x00000807,0x0fc54df4,0x00000905,Crc(row[0]),
+                    0x00001d07,Crc("overlay"),0x00281d06,0x001e1d17,Crc(row[1]),0x01281e20,1,
+                    0x00000203,0x3f800000,0x0a020110,0x00000b07,Crc(row[2]),
+                    0x00280806,0x00290906,0x002a0a06,0x002b0b06,
+                    0x00001e07,0xa6c36cbb,0x04281e20,3);
+            }
+            additions.Add(0x00000807,0x0fc54df4,0x00000905,Crc("cosmic_wipe_label"),
+                0x00000a01,0x00000b07,Crc("CosmicWipeProgress"),0x00000c01,
+                0x00000207,Crc("Menu_AddOption"),0x05080220,3);
+            target.Code=Relocate(gameplay.Code,new Dictionary<int,Injection>{{123,additions}});
+            // Raise the first row to leave space for the combined list.
+            Buffer.BlockCopy(Bytes(new uint[]{0x3f266666}),0,target.Code,12*4,4);
+
+            // The existing Confirm guard compares the selection with a fixed
+            // Wipe Data index. Here Wipe Data is always the last menu option,
+            // including when the original platform check omits Vibration.
+            var lastRow=new Injection();
+            lastRow.Add(0x001f0017,0x90274abc,0x00002003,0x3f800000,0x1f201f0b);
+            input.Code=Relocate(input.Code,new Dictionary<int,Injection>{{4,lastRow}});
+
+            // Keep the stock sound rows, live mixer callbacks, and cancel
+            // snapshot. Move the three-row group lower within the panel.
+            Buffer.BlockCopy(Bytes(new uint[]{0x3ee66666}),0,sound.Code,4,4);
+            return Pack(rows);
+        }
+
+        internal static byte[] StyledGameplayPreview(byte[] original,byte[] preview,int legacy=0) {
+            var stock=Parse(original);
+            var rows=Parse(preview);
+            var source=stock.Find(r=>r.Id==Crc("GameplayMenu_Enter"));
+            var entry=rows.Find(r=>r.Id==Crc("GameplayMenu_Enter"));
+            var video=rows.Find(r=>r.Id==Crc("CosmicVideoOptions"));
+            var vibration=stock.Find(r=>r.Id==0xa096ad03);
+            if(source==null || source.Code.Length!=241*4 || entry==null ||
+               video==null || Read(video.Code,7*4)!=1 || vibration==null ||
+               vibration.Code.Length!=41*4 || Read(vibration.Code,22*4)!=0x00010502)
+                throw new InvalidDataException("Unexpected Gameplay preview callbacks.");
+
+            string[] names={"pitch","yaw","vibration"};
+            int[] getters={58,79,108};
+            int[] ends={68,89,116};
+            uint[] preferences={0x89299dc9,0x502823d8,0xbfb146c9};
+            uint[] setters={0x000e859d,0x11c12fdd,Crc("CosmicPreviewVibration")};
+            bool previous=legacy==1;
+            var tick=new Injection();
+            if(!previous)PreviewNative(tick,"cosmic_gameplay_begin_tick",0);
+            for(int i=0;i<names.Length;i++) {
+                // A nonnegative result is the new setting. Use the stock
+                // callback and acknowledge only after the callback returns.
+                PreviewNative(tick,"cosmic_gameplay_"+names[i]+"_value",2,legacy);
+                tick.Add(0x00000403,0xbf800000,0x03040211);
+                int noChange=tick.Fixups.Count;
+                tick.Branch(3,0,true);
+                // Stock checkboxes pass VM booleans. The bridge returns a numeric command.
+                if(legacy==0 || (legacy==4 && i==2))tick.Add(0x00000403,0x3f800000,0x08040210);
+                else tick.Add(0x00080206);
+                tick.Add(0x00000207,setters[i],0x01080220,1);
+                PreviewCapture(tick,source.Code,getters[i],ends[i],names[i],legacy==0?preferences[i]:0,legacy==4 && i==2);
+                tick.Fixups[noChange].Target=tick.Words.Count;
+            }
+            PreviewNative(tick,"cosmic_gameplay_finish",2,legacy);
+            tick.Add(0x00000403,0x3f800000,0x03040210);
+            int stay=tick.Fixups.Count;
+            tick.Branch(3,0,true);
+            PreviewNative(tick,"popfunction",0);
+            if(!previous)for(int i=8;i<video.Code.Length/4-1;i++)tick.Add(Read(video.Code,i*4));
+            tick.Fixups[stay].Target=tick.Words.Count;
+            tick.Add(0x21);
+            foreach(var fix in tick.Fixups)tick.Words[fix.Position]|=(uint)fix.Target<<fix.Shift;
+
+            var open=new Injection();
+            for(int i=0;i<names.Length;i++)PreviewCapture(open,source.Code,getters[i],ends[i],names[i],legacy==0?preferences[i]:0,legacy==4 && i==2);
+            foreach(var fix in open.Fixups)open.Words[fix.Position]|=(uint)fix.Target<<fix.Shift;
+            PreviewNative(open,"cosmic_gameplay_open",0);
+            // Legacy preview restored Options before pushing the update callback.
+            if(previous)for(int i=8;i<video.Code.Length/4-1;i++)open.Add(Read(video.Code,i*4));
+            open.Add(0x00000507,Crc("overlay"),0x00000607,Crc("CosmicGameplayTick"),
+                0x00000207,Crc("overlay"),0x00000217,Crc("pushfunction"),0x02050020,1,0x21);
+            entry.Code=Bytes(open.Words);
+            rows.Add(new Record{Id=Crc("CosmicGameplayTick"),Args=2,Code=Bytes(tick.Words)});
+            var volumeIndependent=new List<uint>();
+            // The trailing stock code animates a checkbox in the original
+            // menu. The first part owns the actual rumble preference.
+            for(int i=0;i<22;i++)volumeIndependent.Add(Read(vibration.Code,i*4));
+            volumeIndependent.Add(0x21);
+            rows.Add(new Record{Id=setters[2],Args=1,Code=Bytes(volumeIndependent)});
+            return Pack(rows);
+        }
+        static void PreviewNative(Injection script,string name,uint result,int legacy=0) {
+            script.Add(0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),
+                (legacy==2?0:result<<16)|0x00000217,Crc(name),0x01050220-(result==0?0x200u:0u),
+                legacy==1 || result==0?1:result);
+        }
+        static void PreviewCapture(Injection script,byte[] source,int begin,int end,string name,uint preference,bool legacyVibration) {
+            if(preference!=0)script.Add(0x00000507,0xe545a0c5,0x00020517,preference);
+            else for(int i=begin;i<end;i++)script.Add(Read(source,i*4));
+            if(preference!=0 || legacyVibration)script.Add(0x00010402,0x03040210);
+            else script.Add(0x00000403,0x3f800000,0x03040210);
+            int off=script.Fixups.Count;
+            script.Branch(3,0,true);
+            PreviewNative(script,"cosmic_gameplay_"+name+"_on",0);
+            int done=script.Fixups.Count;
+            script.Jump(0,true);
+            script.Fixups[off].Target=script.Words.Count;
+            PreviewNative(script,"cosmic_gameplay_"+name+"_off",0);
+            script.Fixups[done].Target=script.Words.Count;
+        }
+
+        internal static byte[] StyledSoundPreview(byte[] preview,bool previous=false) {
+            var rows=Parse(preview);
+            var entry=rows.Find(r=>r.Id==Crc("SoundMenu_Enter"));
+            var video=rows.Find(r=>r.Id==Crc("CosmicVideoOptions"));
+            if(entry==null || entry.Code.Length!=188*4 || video==null || Read(video.Code,7*4)!=1)
+                throw new InvalidDataException("Unexpected Sound preview callbacks.");
+
+            string[] names={"music","sfx","voice"};
+            uint[] preferences={0x3faa0027,0x2d16f1ee,0x1fdf5f40};
+            uint[] setters={0xa3db69e6,0xcdfa48f8,0x252f93da};
+            var open=new Injection();
+            var tick=new Injection();
+            PreviewNative(tick,"cosmic_sound_begin_tick",0);
+            for(int i=0;i<names.Length;i++) {
+                string capture="cosmic_sound_"+names[i]+"_read";
+                SoundPreviewCapture(open,preferences[i],capture,previous);
+                PreviewNative(tick,"cosmic_sound_"+names[i]+"_value",2);
+                tick.Add(0x00000403,0xbf800000,0x03040211);
+                int unchanged=tick.Fixups.Count;
+                tick.Branch(3,0,true);
+                tick.Add(0x00080206,0x00000207,setters[i],0x01080220,1);
+                SoundPreviewCapture(tick,preferences[i],capture,previous);
+                tick.Fixups[unchanged].Target=tick.Words.Count;
+            }
+            PreviewNative(tick,"cosmic_sound_finish",2);
+            tick.Add(0x00000403,0x3f800000,0x03040210);
+            int stay=tick.Fixups.Count;
+            tick.Branch(3,0,true);
+            PreviewNative(tick,"popfunction",0);
+            for(int i=8;i<video.Code.Length/4-1;i++)tick.Add(Read(video.Code,i*4));
+            tick.Fixups[stay].Target=tick.Words.Count;
+            tick.Add(0x21);
+            foreach(var fix in tick.Fixups)tick.Words[fix.Position]|=(uint)fix.Target<<fix.Shift;
+
+            PreviewNative(open,"cosmic_sound_open",0);
+            open.Add(0x00000507,Crc("overlay"),0x00000607,Crc("CosmicSoundTick"),
+                0x00000207,Crc("overlay"),0x00000217,Crc("pushfunction"),0x02050020,1,0x21);
+            entry.Code=Bytes(open.Words);
+            rows.Add(new Record{Id=Crc("CosmicSoundTick"),Args=2,Code=Bytes(tick.Words)});
+            return Pack(rows);
+        }
+        // Recognize menus written by the previous local audio preview.
+        internal static byte[] LegacyCinematicVoiceVolume(byte[] frontend) {
+            var rows=Parse(frontend);
+            // Observe the same saved Voice value applied by the stock mixer.
+            foreach(uint id in new uint[]{0x87e6bef2,0x252f93da,0x9dcb4a3d}) {
+                var row=rows.Find(r=>r.Id==id);
+                if(row==null)throw new InvalidDataException("Missing voice volume handler.");
+                int position=Tokens(row.Code).Find(i=>(Read(row.Code,i*4)&255)==0x17 &&
+                    Read(row.Code,(i+1)*4)==0x88380a7c);
+                if(position==0 || (Read(row.Code,(position+2)*4)&255)!=0x20)
+                    throw new InvalidDataException("Unexpected voice volume call.");
+                // Run after the mixer call and reuse its scratch registers.
+                uint call=Read(row.Code,(position+2)*4);
+                uint frame=(call>>16)&255, scratch=(call>>8)&255;
+                var capture=new Injection();
+                capture.Add((scratch<<8)|7,0xe545a0c5,
+                    ((frame+1)<<16)|(scratch<<8)|0x17,0x1fdf5f40,
+                    (frame<<8)|7,Crc("overlay"),(scratch<<8)|7,Crc("overlay"),
+                    (scratch<<8)|0x17,Crc("cosmic_sound_voice_read"),
+                    0x02000020|(frame<<16)|(scratch<<8),Read(row.Code,(position+3)*4));
+                row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{position+4,capture}});
+            }
+            return Pack(rows);
+        }
+        static void SoundPreviewCapture(Injection script,uint preference,string callback,bool previous) {
+            script.Add(0x00000507,0xe545a0c5,0x00060517,preference,
+                0x00000507,Crc("overlay"),previous?0x00000217u:0x00000517u,Crc(callback),0x02050020,1);
+        }
+
+        internal static byte[] StyledOptionsHub(byte[] preview) {
+            var rows=Parse(preview);
+            var entry=rows.Find(r=>r.Id==0xb4db5294);
+            if(entry==null || entry.Args!=1 || Read(entry.Code,entry.Code.Length-4)!=0x21)
+                throw new InvalidDataException("Unexpected Options entry.");
+
+            var open=new Injection();
+            // Identical predicate to the original Options Credits row.
+            open.Add(0x00000307,0x56b55f63);
+            open.Branch(3,0,true);
+            PreviewNative(open,"cosmic_options_open_credits",0);
+            open.Jump(0,true);
+            open.Fixups[0].Target=open.Words.Count;
+            PreviewNative(open,"cosmic_options_open",0);
+            open.Fixups[1].Target=open.Words.Count;
+            open.Add(0x00000507,Crc("overlay"),0x00000607,Crc("CosmicOptionsHubTick"),
+                0x00000207,Crc("overlay"),0x00000217,Crc("pushfunction"),0x02050020,1);
+            entry.Code=Relocate(entry.Code,new Dictionary<int,Injection>{{entry.Code.Length/4-1,open}});
+
+            uint[] actions={Crc("GameplayMenu_Enter"),Crc("SoundMenu_Enter"),Crc("CosmicVideoOptions"),0x572245a7,Crc("MenuStack_Pop")};
+            var tick=new Injection();
+            PreviewNative(tick,"cosmic_options_poll",2);
+            for(int i=0;i<actions.Length;i++) {
+                tick.Add(0x00000403,BitConverter.ToUInt32(BitConverter.GetBytes((float)(i+1)),0),0x03040210);
+                int next=tick.Fixups.Count;
+                tick.Branch(3,0,true);
+                if(i>=3)PreviewNative(tick,"popfunction",0);
+                if(i<4) {
+                    // Original menu callbacks expect the parent to be hidden before entering.
+                    tick.Add(0x00000507,0x8610f32e,0x00000602,
+                        0x00000207,Crc("Menu_Show"),0x02050220,1,
+                        0x00010502,0x00000207,actions[i],0x01050220,1);
+                } else tick.Add(0x00000207,actions[i],0x00050220,1);
+                tick.Add(0x21);
+                tick.Fixups[next].Target=tick.Words.Count;
+            }
+            tick.Add(0x21);
+            foreach(var fix in tick.Fixups)tick.Words[fix.Position]|=(uint)fix.Target<<fix.Shift;
+            rows.Add(new Record{Id=Crc("CosmicOptionsHubTick"),Args=2,Code=Bytes(tick.Words)});
+            return Pack(rows);
+        }
+
+        // A distinct anchor identifies the compact Pause Menu in the shared menu script.
+        const uint CompactPauseAnchor=0x3f0c0000; // .546875
+        const uint CompactPausePitch=0x3d872b02; // .066
+
+        // CheatEntered rebuilds the title menu after updating unlocks. Keep the
+        // shared animated backdrop alive across its second stack pop.
+        static readonly uint KeepCheatBackdrop=Crc("CosmicKeepCheatBackdrop");
+
+        internal static byte[] PreserveCheatBackdropOnRefresh(byte[] frontend) {
+            var rows=Parse(frontend);
+            var cheat=rows.Find(r=>r.Id==Crc("CheatEntered"));
+            if(cheat==null || cheat.Code.Length!=703*4 ||
+                Read(cheat.Code,693*4)!=0x02be141f ||
+                Read(cheat.Code,695*4)!=Crc("MenuStack_Pop") ||
+                Read(cheat.Code,699*4)!=Crc("MainMenuText_Enter"))
+                throw new InvalidDataException("Unexpected title cheat refresh.");
+            var begin=new Injection();
+            begin.Add(0x00001703,0x3f800000,0x00001708,KeepCheatBackdrop);
+            var end=new Injection();
+            end.Add(0x00001701,0x00001708,KeepCheatBackdrop);
+            cheat.Code=Relocate(cheat.Code,new Dictionary<int,Injection>{{694,begin},{698,end}});
+            return Pack(rows);
+        }
+
+        internal static byte[] GuardCheatBackdropCleanup(byte[] menu) {
+            var rows=Parse(menu);
+            var destroy=rows.Find(r=>r.Id==0xf4919bc5);
+            if(destroy==null || Read(destroy.Code,100*4)!=Crc("MenuIntro_Destroy") ||
+                Read(destroy.Code,104*4)!=0xd0cf7cb9)
+                throw new InvalidDataException("Unexpected title backdrop cleanup.");
+            var guard=new Injection();
+            guard.Add(0x00000c07,KeepCheatBackdrop);
+            guard.Branch(12,4,true);
+            guard.Jump(103);
+            destroy.Code=Relocate(destroy.Code,new Dictionary<int,Injection>{{99,guard}});
+            return Pack(rows);
+        }
+
+        internal static byte[] AlignPauseHighlight(byte[] menu) {
+            var rows=Parse(menu);
+            // The stock routines position the glow on initial selection and on
+            // subsequent selection changes using separate copies of the pitch.
+            foreach(uint id in new uint[]{0x44c22a0d,0x7f9ba68e}) {
+                var row=rows.Find(r=>r.Id==id);
+                bool initial=id==0x44c22a0d;
+                int pitch=initial?72:61;
+                uint pitchLoad=initial?0x00000c03u:0x00001003u;
+                uint anchorReg=initial?5u:6u;
+                if(row==null || Read(row.Code,pitch*4)!=pitchLoad ||
+                    Read(row.Code,(pitch+1)*4)!=0x3d99999a)
+                    throw new InvalidDataException("Unexpected menu highlight position code.");
+                var choose=new Injection();
+                choose.Add(0x00002d03,CompactPauseAnchor,0x2e2d0010|(anchorReg<<8));
+                choose.Branch(46,0,true);
+                choose.Add(pitchLoad,CompactPausePitch);
+                choose.Fixups[0].Target=choose.Words.Count;
+                row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{pitch+2,choose}});
+            }
+            return Pack(rows);
+        }
+
+        internal static byte[] AlignPauseMenu(byte[] frontend,bool previous=false) {
+            const uint menuAnchorField=0xb87458ce, optionCountField=0x90274abc;
+            const uint negativePitchAdjustment=0xbc1374bc; // -.009
+            var rows=Parse(frontend);
+            var pause=rows.Find(r=>r.Id==Crc("pausemenu_enter"));
+            if(pause==null)throw new InvalidDataException("Pause menu missing.");
+            int anchors=0,calls=0;
+            var hooks=new Dictionary<int,Injection>();
+            uint addOption=Crc("Menu_AddOption");
+            foreach(int word in Tokens(pause.Code)) {
+                uint op=Read(pause.Code,word*4);
+                if((op&255)==3 && Read(pause.Code,(word+1)*4)==0x3f166666) {
+                    Buffer.BlockCopy(Bytes(new uint[]{previous?0x3f10cccc:CompactPauseAnchor}),0,pause.Code,(word+1)*4,4);
+                    anchors++;
+                }
+                if(previous || (op&255)!=7 || Read(pause.Code,(word+1)*4)!=addOption)continue;
+                if(Read(pause.Code,(word+2)*4)!=0x050d0a20)
+                    throw new InvalidDataException("Unexpected pause option call.");
+                // Stock Menu_AddOption subtracts .075 times the row index.
+                // Offset the anchor by .009 times the number of rows already added.
+                // The live count also handles the optional Upgrade Forms row.
+                var before=new Injection();
+                before.Add(0x002d0d17,optionCountField,0x00002e03,negativePitchAdjustment,
+                    0x2f2e2d0c,0x00003003,CompactPauseAnchor,0x312f300b,0x00310d19,menuAnchorField);
+                hooks.Add(word,before);
+                var after=new Injection();
+                after.Add(0x00003003,CompactPauseAnchor,0x00300d19,menuAnchorField);
+                hooks.Add(word+4,after);
+                calls++;
+            }
+            if(anchors!=1 || (!previous && calls!=6))throw new InvalidDataException("Unexpected pause menu layout.");
+            if(!previous)pause.Code=Relocate(pause.Code,hooks);
+            return Pack(rows);
+        }
+
+        static readonly string[] StockGameplayNames={"pitch","yaw","vibration"};
+        static readonly uint[] StockGameplayFields={0x89299dc9,0x502823d8,0xbfb146c9};
+        static Injection LauncherGameplayOverrides() {
+            var code=new Injection();
+            // Settings initialization can run before the PC registry is ready.
+            code.Add(0x00000507,Crc("overlay"));
+            code.Branch(5,0,true);
+            code.Add(0x00020517,Crc("cosmic_gameplay_pitch_preference"));
+            code.Branch(2,0,true);
+            for(int row=0;row<StockGameplayFields.Length;row++) {
+                PreviewNative(code,"cosmic_gameplay_"+StockGameplayNames[row]+"_preference",2);
+                code.Add(0x00000403,0xbf800000,0x03040211);
+                int unset=code.Fixups.Count;
+                code.Branch(3,0,true);
+                code.Add(0x00000403,0x3f800000,0x08040210,
+                    0x00000507,0xe545a0c5,0x00080519,StockGameplayFields[row]);
+                code.Fixups[unset].Target=code.Words.Count;
+            }
+            code.Fixups[0].Target=code.Words.Count;
+            code.Fixups[1].Target=code.Words.Count;
+            return code;
+        }
+        internal static byte[] SyncLauncherGameplay(byte[] data,bool globals=false) {
+            var rows=Parse(data);
+            var load=rows.Find(r=>r.Id==(globals?0xa4a8ae6eu:0x87e6bef2u));
+            int boundary=globals?69:75;
+            if(load==null || Read(load.Code,boundary*4)!=(globals?0x00000307u:0x00000707u) ||
+                Read(load.Code,(boundary+1)*4)!=0xd45e5cfe)
+                throw new InvalidDataException("Unexpected stock gameplay settings initialization.");
+            load.Code=Relocate(load.Code,new Dictionary<int,Injection>{{boundary,LauncherGameplayOverrides()}});
+            if(!globals) {
+                var confirm=rows.Find(r=>r.Id==0x3b77a27e);
+                if(confirm==null)throw new InvalidDataException("Missing stock Gameplay confirmation.");
+                int confirmAt=-1;
+                foreach(int word in Tokens(confirm.Code))
+                    if(Read(confirm.Code,word*4)==0x00000907 && Read(confirm.Code,(word+1)*4)==0x2712f51f &&
+                       Read(confirm.Code,(word+3)*4)==0x98b5b218)confirmAt=word;
+                if(confirmAt<0)throw new InvalidDataException("Unexpected stock Gameplay confirmation.");
+                var save=new Injection();
+                for(int row=0;row<StockGameplayFields.Length;row++)
+                    PreviewCapture(save,load.Code,0,0,StockGameplayNames[row],StockGameplayFields[row],false);
+                PreviewNative(save,"cosmic_gameplay_save_stock",0);
+                confirm.Code=Relocate(confirm.Code,new Dictionary<int,Injection>{{confirmAt,save}});
+            }
+            return Pack(rows);
+        }
+
         public static byte[] English(byte[] original) {
             using(var s=new MemoryStream()) {
                 s.Write(original,0,original.Length);byte[] label=Encoding.ASCII.GetBytes("ALL ALIENS\0");
@@ -480,8 +864,12 @@ namespace CosmicRecompi {
                 byte[] original=File.ReadAllBytes(File.Exists(backup)?backup:path);
                 if(Hash(original)!=hashes[i])throw new InvalidDataException("Unsupported original form script: "+names[i]);
                 byte[] updated=Transform(names[i],original,Path.Combine(Path.GetDirectoryName(game),"four-arms")),current=File.ReadAllBytes(path);
+                byte[] previous=updated;
+#if COSMIC_NATIVE_SETTINGS
+                if(names[i]=="globals.ds")updated=SyncLauncherGameplay(updated,true);
+#endif
                 if(Hash(current)==Hash(updated))continue;
-                if(Hash(current)!=hashes[i]
+                if(Hash(current)!=hashes[i] && Hash(current)!=Hash(previous)
 #if COSMIC_ULTIMATE_VOICES
                     && !(names[i]=="globals.ds" && Hash(current)=="1c99d65b77ad414fc64fa2c890d458d0870753ec338258ecedf21bfbff00ca55")
 #endif

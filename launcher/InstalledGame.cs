@@ -10,7 +10,7 @@ namespace CosmicRecompi {
 #if COSMIC_GPU_DIAGNOSTICS
         // Experimental package only. Keep each comparison to one changed path;
         // the normal release never reads this file or changes its defaults.
-        internal static void ApplyGraphicsDiagnosticProfile(string root, ProcessStartInfo start, string diagnostics) {
+        internal static void ApplyGraphicsDiagnosticProfile(string root, ProcessStartInfo start, string diagnostics, bool deepCapture = true) {
 #if COSMIC_PERFORMANCE_ALPHA5
             // Community Alpha 5 must use the tested path on fresh and updated installs.
             string profile="measure-no-reuse";
@@ -36,18 +36,24 @@ namespace CosmicRecompi {
             if(profile=="measure-standard" || profile=="measure-gpu-bounds" || profile=="measure-phases" || profile=="measure-no-reuse") {
                 string logs=Path.GetDirectoryName(diagnostics);
                 Directory.CreateDirectory(logs);
-                string timing=Path.Combine(logs,"gpu-timing-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")+".jsonl");
-                start.EnvironmentVariables["BEN10_D3D12_PROFILE"]=timing;
                 string cadence=Path.Combine(logs,"frame-cadence-"+Guid.NewGuid().ToString("N")+".jsonl");
                 string vblank=Path.Combine(logs,"vblank-"+Guid.NewGuid().ToString("N")+".jsonl");
                 start.EnvironmentVariables["BEN10_FRAME_CADENCE_LOG"]=cadence;
                 start.EnvironmentVariables["BEN10_VBLANK_AUDIT"]=vblank;
                 File.AppendAllText(diagnostics,"Cadence output: "+cadence+"; guest vblank output: "+vblank+"; passive timing, no scheduling override."+Environment.NewLine);
-                File.AppendAllText(diagnostics,"GPU timing output: "+timing+"; diagnostic query overhead possible; scopes overlap and must not be summed."+Environment.NewLine);
-                if(profile=="measure-phases" || profile=="measure-no-reuse") {
-                    string phases=Path.Combine(logs,"cpu-draw-phases-"+Guid.NewGuid().ToString("N")+".jsonl");
-                    start.EnvironmentVariables["BEN10_CPU_DRAW_PHASES"]=phases;
-                    File.AppendAllText(diagnostics,"CPU draw phase output: "+phases+"; sequential wall time including driver calls; instrumentation overhead possible."+Environment.NewLine);
+                if(deepCapture) {
+                    string timing=Path.Combine(logs,"gpu-timing-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")+".jsonl");
+                    start.EnvironmentVariables["BEN10_D3D12_PROFILE"]=timing;
+                    File.AppendAllText(diagnostics,"GPU timing output: "+timing+"; diagnostic query overhead possible; scopes overlap and must not be summed."+Environment.NewLine);
+                    if(profile=="measure-phases" || profile=="measure-no-reuse") {
+                        string phases=Path.Combine(logs,"cpu-draw-phases-"+Guid.NewGuid().ToString("N")+".jsonl");
+                        start.EnvironmentVariables["BEN10_CPU_DRAW_PHASES"]=phases;
+                        File.AppendAllText(diagnostics,"CPU draw phase output: "+phases+"; sequential wall time including driver calls; instrumentation overhead possible."+Environment.NewLine);
+                    }
+                } else {
+                    start.EnvironmentVariables.Remove("BEN10_D3D12_PROFILE");
+                    start.EnvironmentVariables.Remove("BEN10_CPU_DRAW_PHASES");
+                    File.AppendAllText(diagnostics,"120 FPS preview: deep GPU and per-draw CPU profiling disabled for the comparison."+Environment.NewLine);
                 }
             }
             File.AppendAllText(diagnostics,DateTime.UtcNow.ToString("o")+" Experimental graphics profile="+profile+"; see release validation for measured results and limits."+Environment.NewLine);
@@ -126,7 +132,7 @@ namespace CosmicRecompi {
                 using (var reader = new BinaryReader(File.OpenRead(target))) {
                     if (reader.BaseStream.Length > 12 &&
                         reader.ReadUInt64() == 0x0000000244424c41UL &&
-                        reader.ReadUInt32() == (hasFourArms ? 26u : 25u)) return;
+                        reader.ReadUInt32() == (hasFourArms ? 29u : 28u)) return;
                 }
             }
             string temporary = target + ".new";
@@ -169,6 +175,8 @@ namespace CosmicRecompi {
             PrepareAlbedo(root, folder);
             string log = Path.Combine(folder, "logs", "runtime.log").Replace('\\', '/');
             string resolution = "720p", frameLimit = "30",fullscreen="false";
+            string graphicsPreset = "default", sharpening = "original", screenBloom = "original";
+            string internalResolution = "", antiAliasing = "", textureFiltering = "";
             string video = Path.Combine(folder, "user", "pc-video.ini");
             if (File.Exists(video)) foreach (string setting in File.ReadAllLines(video)) {
                 if (setting == "resolution=720p") resolution = "720p";
@@ -177,6 +185,19 @@ namespace CosmicRecompi {
                 if (setting == "resolution=4k") resolution = "4k";
                 if (setting == "frame_limit=30") frameLimit = "30";
                 if (setting == "frame_limit=60") frameLimit = "60";
+                if (setting == "frame_limit=120") frameLimit = "120";
+                if (setting.StartsWith("graphics_preset=", StringComparison.Ordinal))
+                    graphicsPreset = setting.Substring("graphics_preset=".Length);
+                if (setting.StartsWith("internal_resolution=", StringComparison.Ordinal))
+                    internalResolution = setting.Substring("internal_resolution=".Length);
+                if (setting.StartsWith("anti_aliasing=", StringComparison.Ordinal))
+                    antiAliasing = setting.Substring("anti_aliasing=".Length);
+                if (setting.StartsWith("screen_bloom=", StringComparison.Ordinal))
+                    screenBloom = setting.Substring("screen_bloom=".Length);
+                if (setting.StartsWith("sharpening=", StringComparison.Ordinal))
+                    sharpening = setting.Substring("sharpening=".Length);
+                if (setting.StartsWith("texture_filtering=", StringComparison.Ordinal))
+                    textureFiltering = setting.Substring("texture_filtering=".Length);
                 if (setting == "frame_limit=unlimited") frameLimit = "unlimited";
                 if (setting == "display_mode=borderless") fullscreen="true";
                 if (setting == "display_mode=windowed") fullscreen="false";
@@ -189,11 +210,39 @@ namespace CosmicRecompi {
             // Command-line settings also avoid relying on the SDK TOML reader's
             // narrow filename handling for Windows paths containing accents.
             start.UseShellExecute = false; start.WorkingDirectory = folder;
+            start.EnvironmentVariables.Remove("BEN10_SCREEN_BLOOM");
+            if (screenBloom == "low" || screenBloom == "medium" || screenBloom == "high")
+                start.EnvironmentVariables["BEN10_SCREEN_BLOOM"] = screenBloom;
+            start.EnvironmentVariables.Remove("BEN10_SHARPENING");
+            if (sharpening == "low" || sharpening == "medium" || sharpening == "high")
+                start.EnvironmentVariables["BEN10_SHARPENING"] = sharpening;
             start.Arguments = "--gpu_plugin xenos --game_data_root \"" + Path.Combine(folder, "game") + "\" --user_data_root \"" + Path.Combine(folder, "user") + "\" --cache_root \"" + Path.Combine(folder, "cache") + "\"";
             start.Arguments += " --resolution " + resolution + " --fullscreen "+fullscreen+" --mnk_mode true --input_backend sdl --gpu_allow_invalid_fetch_constants true --log_level info --log_file logs/runtime.log";
+            if (internalResolution == "") internalResolution = graphicsPreset == "high" ? "2" : "original";
+            if (antiAliasing == "") antiAliasing = graphicsPreset == "medium" || graphicsPreset == "high" ? "fxaa" : "original";
+            if (textureFiltering == "") textureFiltering = graphicsPreset == "low" ? "2" :
+                graphicsPreset == "medium" ? "8" : graphicsPreset == "high" ? "16" : "original";
+            if (internalResolution == "1" || internalResolution == "2")
+                start.Arguments += " --resolution_scale " + internalResolution;
+            if (antiAliasing == "none" || antiAliasing == "fxaa" || antiAliasing == "fxaa_extreme")
+                start.Arguments += " --swap_post_effect " + antiAliasing;
+            switch (textureFiltering) {
+                case "2": start.Arguments += " --anisotropic_override 2"; break;
+                case "4": start.Arguments += " --anisotropic_override 3"; break;
+                case "8": start.Arguments += " --anisotropic_override 4"; break;
+                case "16": start.Arguments += " --anisotropic_override 5"; break;
+            }
+            File.AppendAllText(diagnostics, "Graphics options: internal_resolution=" + internalResolution +
+                ", anti_aliasing=" + antiAliasing + ", texture_filtering=" + textureFiltering + Environment.NewLine);
+            if (!uncapped && frameLimit == "120") {
+                start.Arguments += " --video_mode_refresh_rate 120";
+                File.AppendAllText(diagnostics, "120 FPS preview: requested 120 Hz guest video timing." + Environment.NewLine);
+            }
             foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
                 if (((string)variable.Key).StartsWith("BEN10_", StringComparison.OrdinalIgnoreCase)) start.EnvironmentVariables.Remove((string)variable.Key);
             start.EnvironmentVariables["BEN10_PORTABLE_ROOT"] = folder;
+            if (Environment.GetEnvironmentVariable("BEN10_OPTIONS_VIDEO_PREVIEW") == "1")
+                start.EnvironmentVariables["BEN10_OPTIONS_VIDEO_PREVIEW"] = "1";
             string introSetting = Path.Combine(folder, "user", "skip-intro.txt");
             bool skipIntro = File.Exists(introSetting) && File.ReadAllText(introSetting).Trim() == "on";
             if (skipIntro) start.EnvironmentVariables["BEN10_SKIP_INTRO"] = "1";
@@ -219,16 +268,38 @@ namespace CosmicRecompi {
                 start.EnvironmentVariables["BEN10_" + flag] = "1";
             if (!uncapped && frameLimit != "unlimited") start.EnvironmentVariables["BEN10_FRAME_PACING_HZ"] = frameLimit;
 #if COSMIC_GPU_DIAGNOSTICS
-            ApplyGraphicsDiagnosticProfile(folder,start,diagnostics);
+            string performanceRequest = Path.Combine(folder, "temp", "capture-performance-on-next-play");
+            bool capturePerformance = File.Exists(performanceRequest);
+            ApplyGraphicsDiagnosticProfile(folder,start,diagnostics,capturePerformance || uncapped || frameLimit!="120");
 #endif
             string temp = Path.Combine(folder, "temp"); Directory.CreateDirectory(temp);
             start.EnvironmentVariables["TEMP"] = temp; start.EnvironmentVariables["TMP"] = temp;
             if (configureProcess != null) configureProcess(start);
+            // Local, one-shot capture using the normal Play path.
+            string shadowRequest = Path.Combine(folder, "temp", "capture-shadows-on-next-play");
+            bool captureShadows = File.Exists(shadowRequest);
+            if (captureShadows) {
+                string suffix = Guid.NewGuid().ToString("N") + ".jsonl";
+                string logs = Path.GetDirectoryName(diagnostics);
+                start.EnvironmentVariables["BEN10_RTV_STENCIL_AUDIT"] = Path.Combine(logs, "shadow-stencil-" + suffix);
+                start.EnvironmentVariables["BEN10_D3D12_DRAW_PROFILE"] = Path.Combine(logs, "shadow-draws-" + suffix);
+                File.AppendAllText(diagnostics, "Shadow draw capture requested." + Environment.NewLine);
+            }
             start.RedirectStandardOutput=true;start.RedirectStandardError=true;
             string output=Path.Combine(folder,"logs","startup-output.log");
             File.WriteAllText(output,DateTime.UtcNow.ToString("o")+" Launching game. Resolution="+resolution+"; frame limit="+frameLimit+Environment.NewLine);
             File.AppendAllText(diagnostics,DateTime.UtcNow.ToString("o")+" Process.Start: "+start.FileName+"; early output: "+output+Environment.NewLine);
             Process process = Process.Start(start);
+#if COSMIC_GPU_DIAGNOSTICS
+            if (capturePerformance && process != null) {
+                try { File.Delete(performanceRequest); }
+                catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+#endif
+            if (captureShadows && process != null) {
+                try { File.Delete(shadowRequest); }
+                catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
             object logLock=new object();
             DataReceivedEventHandler capture=delegate(object sender,DataReceivedEventArgs args) {
                 if(args.Data==null)return;

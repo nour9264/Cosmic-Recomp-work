@@ -56,6 +56,15 @@ for filename,expected_changed in [('gld_xbx.ds',{0x66960347}),('circdisp.ds',{0x
         assert list(__import__('struct').unpack('>8I',empty[-32:]))==[
             0x00301806,0x00003103,0,0x00002d07,0x41871bc9,0x02302d20,31,0x21], 'Empty slot must be hidden, not display Ben'
 report['real_gameplay_validated']=False
+original_frontend={h:c for h,_,c in records((ROOT/'originals/global/scripts/frontend.ds').read_bytes())}
+patched_frontend={h:c for h,_,c in records((scripts/'frontend.ds').read_bytes())}
+original_quit,_=decode(original_frontend[crc('QuitGame')])
+assert patched_frontend[crc('QuitGame')]==original_frontend[crc('QuitGame')]
+launcher_quit,_=decode(patched_frontend[crc('CosmicQuitToLauncher')])
+yes=original_quit.index(0x0aeff759)
+assert original_quit[yes+3]==0xe66c2a6e
+original_quit[yes+3]=crc('CosmicExitToLauncher')
+assert launcher_quit==original_quit
 if args.native_settings:
     old={h:(a,c) for h,a,c in records((ROOT/'originals/global/scripts/frontend.ds').read_bytes())}
     new={h:(a,c) for h,a,c in records((scripts/'frontend.ds').read_bytes())}

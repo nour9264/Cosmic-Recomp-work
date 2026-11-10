@@ -4,6 +4,7 @@ Contains patch locations and authored changes, never original function bodies.
 Run after rexglue codegen and before compiling the consumer.
 """
 import argparse
+import re
 from pathlib import Path
 from generated_functions import locate_functions
 
@@ -223,4 +224,143 @@ if 'BindPromptSprite' not in body:
                  '\t\t} else {\n\t\t  '+needle+'\n\t\t}')
     p.write_text(text[:start]+body.replace(needle,replacement)+text[end:])
     changes+=1
+# Opt-in lifecycle trace for the PC cinematic player. Observe the stock
+# results without changing guest state or substituting a movie.
+cinematic_hooks = {
+    'sub_821A86B8': {
+        'REX_FUNC_PROLOGUE();': 'const uint32_t cinematic_caller = ctx.lr;',
+        'sub_821A8268(ctx, base);': 'ben10::cinematic_trace::Open(cinematic_caller, ctx.r3.u32);',
+    },
+    # The New Game traces resolve to this frontend caller, not the
+    # in-mission movie loop below.
+    'sub_82156CD0': {
+        'ctx.lr = 0x82157018;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'static thread_local uint32_t intro_state_site = 0, intro_state_value = 0;\n'
+            '\tben10::cinematic_trace::State("intro state", 0x82157018, ctx.r3.u32, intro_state_site, intro_state_value);',
+        'ctx.lr = 0x82157098;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'static thread_local uint32_t intro_done_site = 0, intro_done_value = 0;\n'
+            '\tben10::cinematic_trace::State("intro completion", 0x82157098, ctx.r3.u32, intro_done_site, intro_done_value);',
+        'ctx.lr = 0x821570DC;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'ben10::cinematic_trace::Closing(ctx.ctr.u32);',
+    },
+    'sub_821C2510': {
+        'ctx.lr = 0x821C263C;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'static thread_local uint32_t movie_state_target = 0, movie_state_value = 0;\n'
+            '\tben10::cinematic_trace::State("story state", 0x821C263C, ctx.r3.u32, movie_state_target, movie_state_value);',
+        'ctx.lr = 0x821C26D8;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'static thread_local uint32_t movie_done_target = 0, movie_done_value = 0;\n'
+            '\tben10::cinematic_trace::State("story completion", 0x821C26D8, ctx.r3.u32, movie_done_target, movie_done_value);',
+        'ctx.lr = 0x821C2710;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'ben10::cinematic_trace::Closing(ctx.ctr.u32);',
+    },
+}
+for name, hooks in cinematic_hooks.items():
+    p = locate_functions(args.generated, [name])[name]
+    text = p.read_text()
+    start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    if 'ben10::cinematic_trace::' in body:
+        continue
+    for target, trace in hooks.items():
+        if body.count(target) != 1:
+            raise RuntimeError(f'Unexpected cinematic trace site in {name}: {target}')
+        if trace.startswith('ben10::cinematic_trace::Closing'):
+            body = body.replace(target, trace + '\n\t' + target)
+        else:
+            body = body.replace(target, target + '\n\t' + trace)
+    p.write_text('#include "../../src/cinematic_trace.h"\n' + text[:start] + body + text[end:])
+    changes += 1
+
+# The frontend keeps the original movie object for the stock destructor.
+# Match the original path and keep each supported playback loop paired with its destructor.
+intro_player_hooks = {
+    'sub_821A9490': {
+        'ctx.lr = 0x821A959C;\n\tsub_821AA990(ctx, base);':
+            'char source[260]{};\n'
+            '\tfor (uint32_t i = 0; i < sizeof(source) - 1; ++i) {\n'
+            '\t\tsource[i] = static_cast<char>(REX_LOAD_U8(ctx.r3.u32 + i));\n'
+            '\t\tif (!source[i]) break;\n'
+            '\t}\n'
+            '\tben10::cinematic_player::CaptureSource(source);\n'
+            '\tctx.lr = 0x821A959C;\n\tsub_821AA990(ctx, base);',
+    },
+    'sub_821A86B8': {
+        'const uint32_t cinematic_caller = ctx.lr;':
+            'const uint32_t cinematic_caller = ctx.lr;\n'
+            '\tben10::cinematic_player::ResetSource();',
+        'ben10::cinematic_trace::Open(cinematic_caller, ctx.r3.u32);':
+            'ben10::cinematic_trace::Open(cinematic_caller, ctx.r3.u32);\n'
+            '\tben10::cinematic_player::Begin(cinematic_caller, ctx.r3.u32);',
+    },
+    'sub_82156CD0': {
+        'ctx.lr = 0x82157018;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'ctx.lr = 0x82157018;\n'
+            '\tif (ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32 != 0;\n'
+            '\telse { REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }',
+        'ctx.lr = 0x8215707C;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'ctx.lr = 0x8215707C;\n'
+            '\tif (!ben10::cinematic_player::Update(ctx.r3.u32)) { REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }',
+        'ctx.lr = 0x82157098;\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);':
+            'ctx.lr = 0x82157098;\n'
+            '\tif (!ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) { REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }',
+        'ctx.lr = 0x821570DC;':
+            'ben10::cinematic_player::Close(ctx.r3.u32);\n\tctx.lr = 0x821570DC;',
+    },
+}
+for name, (poll, update, complete, close) in {
+    'sub_82158018': ('82158438', '8215841C', '821584D4', '8215854C'),
+    'sub_821C2510': ('821C263C', '821C26C0', '821C26D8', '821C2710'),
+}.items():
+    for site, statement in (
+        (poll, 'if (ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32 != 0;'),
+        (update, 'if (!ben10::cinematic_player::Update(ctx.r3.u32)) { REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }'),
+        (complete, 'if (!ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) { REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }'),
+        (close, 'ben10::cinematic_player::Close(ctx.r3.u32);'),
+    ):
+        target = f'ctx.lr = 0x{site};\n\tREX_CALL_INDIRECT_FUNC(ctx.ctr.u32);'
+        if site == poll:
+            replacement = f'ctx.lr = 0x{site};\n\t{statement}\n\telse {{ REX_CALL_INDIRECT_FUNC(ctx.ctr.u32); }}'
+        elif site == close:
+            replacement = f'{statement}\n\t{target}'
+        else:
+            replacement = f'ctx.lr = 0x{site};\n\t{statement}'
+        intro_player_hooks.setdefault(name, {})[target] = replacement
+
+subtitle_parser = locate_functions(args.generated, ['sub_821E7EA0'])['sub_821E7EA0']
+subtitle_text = subtitle_parser.read_text()
+old_capture = re.compile(
+    r'(loc_821E8128:)\n\tif \(\(subtitle_caller == 0x82157048.*?'
+    r'\n\t}\n(?=\t// addi r1,r1,272)', re.DOTALL)
+subtitle_updated = old_capture.sub(r'\1\n', subtitle_text).replace(
+    '\n\tconst uint32_t subtitle_caller = ctx.lr;', '')
+if subtitle_updated != subtitle_text:
+    subtitle_parser.write_text(subtitle_updated)
+    changes += 1
+
+for name, hooks in intro_player_hooks.items():
+    p = locate_functions(args.generated, [name])[name]
+    text = p.read_text()
+    start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    original = body
+    body = body.replace('if (ben10::cinematic_player::Ready(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32;', 'if (ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32 != 0;')
+    for target, replacement in hooks.items():
+        if replacement in body:
+            continue
+        if body.count(target) != 1:
+            raise RuntimeError(f'Unexpected cinematic player site in {name}: {target}')
+        body = body.replace(target, replacement)
+    body = body.replace('if (ben10::cinematic_player::Result(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32 != 0;', 'if (ben10::cinematic_player::Ready(ctx.r3.u32, ctx.r3.u32)) ctx.r3.u64 = ctx.r3.u32;')
+    if body == original:
+        continue
+    header = '#include "../../src/cinematic_player.h"\n'
+    p.write_text((header if header not in text else "") + text[:start] + body + text[end:])
+    changes += 1
+
 print('PC integration applied to',changes,'locally generated functions.')

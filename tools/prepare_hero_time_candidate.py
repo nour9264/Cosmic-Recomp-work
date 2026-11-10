@@ -258,6 +258,21 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.num(0, 0); c.put(0, PHASE)
     c.done()
     result.append((crc('CosmicHeroUnload'), 0, c.finish()))
+
+    c = Code()
+    c.get(0, 'gCurrentCharacter')
+    for ultimate in sorted(ULTIMATE_PAIRS.values()):
+        c.num(1, ultimate); c.binary(0x10, 2, 0, 1)
+        c.false(2, 'next_' + str(ultimate)); c.jump('ultimate')
+        c.label('next_' + str(ultimate))
+    c.native('cosmic_ultimate_hud_off'); c.done()
+    c.label('ultimate')
+    c.native('cosmic_ultimate_hud_on'); c.done()
+    result.append((crc('CosmicUltimateHudUpdate'), 0, c.finish()))
+
+    c = Code()
+    c.native('cosmic_ultimate_hud_off'); c.done()
+    result.append((crc('CosmicUltimateHudReset'), 0, c.finish()))
     if ultimate_voices:
         from ultimate_voice_program import hero_functions
         result.extend(hero_functions())
@@ -276,9 +291,9 @@ def transform_globals(blob):
         # Apply to original boundaries before the All Aliens relocation. The
         # caller must compose this before transform_globals from that module.
         if identity == crc('switch_form_update'):
-            code = relocate(code, {34: hook('CosmicHeroUpdate')}); found.add('update')
+            code = relocate(code, {34: hook('CosmicHeroUpdate') + hook('CosmicUltimateHudUpdate')}); found.add('update')
         if identity == crc('destroy_form_switching'):
-            code = relocate(code, {0: hook('CosmicHeroUnload')}); found.add('unload')
+            code = relocate(code, {0: hook('CosmicUltimateHudReset') + hook('CosmicHeroUnload')}); found.add('unload')
         if identity == 0xaac6a726:
             code = relocate(code, {87: hook('CosmicHeroLoad')}); found.add('load')
         rows.append((identity, args, code))

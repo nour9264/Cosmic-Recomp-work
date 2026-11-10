@@ -11,6 +11,15 @@ vm = VM([1, 2, 3, 4])
 for event in ('loaded', 'active', 'return', 'recharge', 'ready'):
     vm.globals[crc('overlay')][crc('cosmic_hero_' + event)] = lambda *_: None
 vm.functions = {identity: (args, code) for identity, args, code in authored()}
+palette = []
+vm.globals[crc('overlay')][crc('cosmic_ultimate_hud_on')] = lambda *_: palette.append(True)
+vm.globals[crc('overlay')][crc('cosmic_ultimate_hud_off')] = lambda *_: palette.append(False)
+for form in [None, *range(1, 18)]:
+    vm.globals[crc('gCurrentCharacter')] = form
+    vm.run('CosmicUltimateHudUpdate')
+    assert palette[-1] == (form in ULTIMATE_PAIRS.values()), form
+vm.run('CosmicUltimateHudReset')
+assert not palette[-1]
 vm.globals[crc('overlay')][crc('cosmic_hero_enabled')] = lambda *_: 1
 vm.globals[crc(READY)] = True
 vm.globals[crc(PHASE)] = 0

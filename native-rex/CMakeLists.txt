@@ -20,7 +20,8 @@ set(BEN10_SOURCES
 if(WIN32)
     enable_language(RC)
     add_executable(ben10 WIN32 ${BEN10_SOURCES} ../launcher/cosmic_icon.rc)
-    target_sources(ben10 PRIVATE src/default_prompt_sprites.rc)
+    target_sources(ben10 PRIVATE src/default_prompt_sprites.rc src/cinematic_player.cpp)
+    target_link_libraries(ben10 PRIVATE mfplat mfuuid windowscodecs oleaut32 d3d12 d3dcompiler)
     target_include_directories(ben10 PRIVATE "$<$<COMPILE_LANGUAGE:RC>:${CMAKE_CURRENT_SOURCE_DIR}/../launcher>" "$<$<COMPILE_LANGUAGE:RC>:${CMAKE_CURRENT_SOURCE_DIR}/src>")
     set_source_files_properties(src/default_prompt_sprites.rc PROPERTIES
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/default_prompt_sprites.bin")

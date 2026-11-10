@@ -191,12 +191,20 @@ namespace CosmicRecompi {
                             using (var runLock = new FileStream(Path.Combine(installation, "running.lock"),
                                 FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
                                 InstalledGame.VerifyImportedExecutable(Root);
-                                if (Directory.Exists(bundle))
+                                bool existingBundle = Directory.Exists(bundle);
+                                if (existingBundle && Array.TrueForAll(new[] {
+                                    "g_fa.xbx", "atk_fa.ddf", "four-arms-registration.bin", "four-arms-upgrade-init.bin"
+                                }, name => {
+                                    var file = new FileInfo(Path.Combine(bundle, name));
+                                    return file.Exists && file.Length > 0;
+                                }))
                                     throw new IOException("Four Arms files have already been prepared in this installation.");
+                                string output = existingBundle
+                                    ? bundle + "-repair-" + Guid.NewGuid().ToString("N") : bundle;
                                 Status("Preparing Four Arms from your PS3 files…");
                                 var start = new System.Diagnostics.ProcessStartInfo(python) {
                                     Arguments = "-B \"" + script + "\" \"" + dialog.SelectedPath.TrimEnd('\\') +
-                                        "\" \"" + Path.Combine(installation, "game") + "\" \"" + decoder + "\" \"" + bundle + "\"",
+                                        "\" \"" + Path.Combine(installation, "game") + "\" \"" + decoder + "\" \"" + output + "\"",
                                     WorkingDirectory = importer,
                                     UseShellExecute = false,
                                     CreateNoWindow = true,
@@ -208,6 +216,15 @@ namespace CosmicRecompi {
                                     if (process.ExitCode != 0) {
                                         Diagnostic(error);
                                         throw new IOException("Four Arms import failed. Select a supported European PS3_GAME folder. See the launcher log for details.");
+                                    }
+                                }
+                                if (existingBundle) {
+                                    string previous = output + "-previous";
+                                    Directory.Move(bundle, previous);
+                                    try { Directory.Move(output, bundle); }
+                                    catch {
+                                        Directory.Move(previous, bundle);
+                                        throw;
                                     }
                                 }
                             }

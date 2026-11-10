@@ -200,11 +200,12 @@ template<int Resolution,int Rate> void SetVideo(PPCContext& ctx,uint8_t* base) {
       if(line=="resolution=1440p")resolution="1440p";
       if(line=="resolution=4k")resolution="4k";
       if(line=="frame_limit=60")rate="60";
+      if(line=="frame_limit=120")rate="120";
       if(line=="frame_limit=unlimited")rate="unlimited";
       if(line.rfind("resolution=",0)!=0 && line.rfind("frame_limit=",0)!=0)other.push_back(line);
     }}
     if constexpr(Resolution>=0){const char* choices[]={"720p","1080p","1440p","4k"};resolution=choices[Resolution];}
-    if constexpr(Rate>=0)rate=Rate==0?"unlimited":Rate==60?"60":"30";
+    if constexpr(Rate>=0)rate=Rate==0?"unlimited":std::to_string(Rate);
     std::filesystem::create_directories(path.parent_path());auto temporary=path;temporary+=L".native.tmp";
     {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<"resolution="<<resolution<<"\nframe_limit="<<rate<<"\n";for(const auto& extra:other)file<<extra<<'\n';file.flush();if(!file)throw std::runtime_error("Could not write video settings");}
     if(!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("Could not commit video settings");
@@ -261,7 +262,8 @@ template<int Resolution> void SetResolution(PPCContext& ctx,uint8_t* base) {
     auto* active=window.load();if(!active)return;
     try {
       std::lock_guard guard(video_settings_mutex);
-      ApplyPresentation(active,DisplayMode(path),Resolution);
+      const int mode=DisplayMode(path);
+      if(mode!=1)ApplyPresentation(active,mode,Resolution);
       const char* choices[]={"720p","1080p","1440p","4k"};
       SaveVideoKey(path,"resolution",choices[Resolution]);
       REXLOG_INFO("Cosmic native VIDEO: output_resolution={}, applied_without_restart=true",choices[Resolution]);
@@ -296,6 +298,231 @@ template<ben10::albedo_textures::ButtonIcons Mode> void SetButtonIcons(PPCContex
     REXLOG_INFO("Cosmic native VIDEO: button_icons={}",mode);
   }catch(const std::exception& error){REXLOG_ERROR("Cosmic button icons failed: {}",error.what());}
 }
+struct GraphicsSetting {
+  const char* key;
+  const char* values[5];
+  int count;
+};
+inline constexpr GraphicsSetting GraphicsSettings[]={
+  {"internal_resolution",{"original","1","2"},3},
+  {"anti_aliasing",{"original","none","fxaa","fxaa_extreme"},4},
+  {"texture_filtering",{"original","2","4","8","16"},5},
+  {"sharpening",{"original","low","medium","high"},4},
+  {"screen_bloom",{"original","low","medium","high"},4},
+};
+template<int Setting> int GraphicsChoice(const std::filesystem::path& path) {
+  const auto preset=ReadVideoSetting(path,"graphics_preset","default");
+  const char* defaults[]={
+    preset=="high"?"2":"original",
+    preset=="medium" || preset=="high"?"fxaa":"original",
+    preset=="low"?"2":preset=="medium"?"8":preset=="high"?"16":"original",
+    "original","original"
+  };
+  constexpr auto option=GraphicsSettings[Setting];
+  const auto value=ReadVideoSetting(path,option.key,defaults[Setting]);
+  for(int i=0;i<option.count;++i)if(value==option.values[i])return i;
+  return 0;
+}
+template<int Setting> void ReadGraphics(PPCContext& ctx,uint8_t* base) {
+  auto* host=runtime.load();
+  ReturnNumber(ctx,base,host?float(GraphicsChoice<Setting>(host->user_data_root()/"pc-video.ini")):0.0f);
+}
+template<int Setting> void ChangeGraphics(int direction) {
+  auto* host=runtime.load();
+  if(!host)return;
+  constexpr auto option=GraphicsSettings[Setting];
+  const auto path=host->user_data_root()/"pc-video.ini";
+  try {
+    std::lock_guard guard(video_settings_mutex);
+    const int next=(GraphicsChoice<Setting>(path)+direction+option.count)%option.count;
+    SaveVideoKey(path,option.key,option.values[next]);
+    REXLOG_INFO("Graphics {}={} saved",option.key,option.values[next]);
+  }catch(const std::exception& error){REXLOG_ERROR("Could not save graphics option: {}",error.what());}
+}
+template<int Setting> void CycleGraphics(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  ChangeGraphics<Setting>(1);
+}
+namespace gameplay_preview {
+inline std::atomic<bool> active{false};
+inline std::atomic<unsigned> snapshot{0};
+inline std::atomic<unsigned> pending{0};
+inline unsigned tick_request=0; // Read and written only by the game script thread.
+inline bool tick_stock_changed=false;
+constexpr unsigned apply_flag=1u<<6;
+constexpr unsigned back=1u<<7;
+constexpr unsigned wipe=1u<<8;
+
+template<unsigned Row,bool On> void Capture(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  if constexpr(On)snapshot.fetch_or(1u<<Row);
+  else snapshot.fetch_and(~(1u<<Row));
+}
+inline constexpr const char* stock_keys[]={"invert_pitch","invert_yaw","vibration"};
+template<unsigned Row> void StockPreference(PPCContext& ctx,uint8_t* base) {
+  auto* host=runtime.load();
+  const auto value=host?ReadVideoSetting(host->user_data_root()/"pc-gameplay.ini",stock_keys[Row],""):"";
+  ReturnNumber(ctx,base,value=="on"?1.0f:value=="off"?0.0f:-1.0f);
+}
+inline void SaveStockPreferences(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  auto* host=runtime.load();
+  if(!host)return;
+  const unsigned bits=snapshot.load();
+  try {
+    std::lock_guard guard(video_settings_mutex);
+    const auto path=host->user_data_root()/"pc-gameplay.ini";
+    for(unsigned row=0;row<std::size(stock_keys);++row)
+      SaveVideoKey(path,stock_keys[row],(bits&(1u<<row))?"on":"off");
+  } catch(const std::exception& error) {
+    REXLOG_ERROR("Cosmic Gameplay: could not save controller preferences: {}",error.what());
+  }
+}
+inline void Open(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  pending=0;
+  snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
+      (ben10::albedo_hud::enabled.load()?32u:0u);
+  ben10_pc_video::controller_sample=0;
+  ben10_pc_video::opening_guard=true;
+  active=true;
+  ben10_pc_video::visible=true;
+}
+inline void BeginTick(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  tick_request=pending.load();
+  tick_stock_changed=bool(tick_request&apply_flag) && bool((tick_request^snapshot.load())&7u);
+}
+template<unsigned Row> void Desired(PPCContext& ctx,uint8_t* base) {
+  const auto request=tick_request;
+  const auto bit=1u<<Row;
+  ReturnNumber(ctx,base,(request&apply_flag) && ((request^snapshot.load())&bit)?
+      ((request&bit)?1.0f:0.0f):-1.0f);
+}
+inline void Finish(PPCContext& ctx,uint8_t* base) {
+  const auto request=tick_request;
+  if(request&apply_flag) {
+    if(tick_stock_changed)SaveStockPreferences(ctx,base);
+    if(bool(request&8u)!=all_aliens_enabled)ToggleAllAliens(ctx,base);
+    if(bool(request&16u)!=hero_time_enabled)ToggleHeroTime(ctx,base);
+    if(bool(request&32u)!=ben10::albedo_hud::enabled.load())ToggleAlbedoHud(ctx,base);
+    snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
+        (ben10::albedo_hud::enabled.load()?32u:0u);
+    pending=0;
+  }
+  if(request&(back|wipe)) {
+    if(request&wipe)WipeProgress(ctx,base);
+    ben10_pc_video::release_guard=true;
+    ben10_pc_video::visible=false;
+    active=false;
+    pending=0;
+    ReturnNumber(ctx,base,1);
+    return;
+  }
+  ReturnNumber(ctx,base,0);
+}
+}
+namespace sound_preview {
+inline std::atomic<bool> active{false};
+inline std::atomic<unsigned> snapshot{0};
+inline std::atomic<unsigned> pending{0};
+inline unsigned tick_request=0; // Guest script thread only.
+constexpr unsigned step_count=20;
+constexpr unsigned apply_flag=1u<<15;
+constexpr unsigned back=1u<<16;
+
+template<unsigned Row> void Capture(PPCContext& ctx,uint8_t* base) {
+  // The VM stores the method receiver first, followed by the float value.
+  // Original sub_821B75A0 reads its first explicit argument at offset 12.
+  uint32_t encoded_pointer;
+  std::memcpy(&encoded_pointer,base+0x826F8688,sizeof(encoded_pointer));
+  const auto arguments=_byteswap_ulong(encoded_pointer);
+  if(arguments && arguments<=UINT32_MAX-16 && base[arguments+8]==0 && base[arguments+9]==2) {
+    uint32_t encoded_value;
+    std::memcpy(&encoded_value,base+arguments+12,sizeof(encoded_value));
+    const auto bits=_byteswap_ulong(encoded_value);
+    float value;
+    std::memcpy(&value,&bits,sizeof(value));
+    if(std::isfinite(value)) {
+      const auto step=unsigned(std::lround(std::clamp(value,0.0f,1.0f)*step_count));
+      const auto shift=Row*5;
+      snapshot=(snapshot.load()&~(31u<<shift))|(step<<shift);
+    }
+  }
+  ReturnVoid(ctx,base);
+}
+inline void Open(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  pending=0;
+  ben10_pc_video::controller_sample=0;
+  ben10_pc_video::opening_guard=true;
+  active=true;
+  ben10_pc_video::visible=true;
+}
+inline void BeginTick(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  tick_request=pending.load();
+}
+template<unsigned Row> void Desired(PPCContext& ctx,uint8_t* base) {
+  constexpr unsigned shift=Row*5;
+  const auto requested=(tick_request>>shift)&31u;
+  const auto saved=(snapshot.load()>>shift)&31u;
+  ReturnNumber(ctx,base,(tick_request&apply_flag) && requested!=saved?
+      float(requested)/step_count:-1.0f);
+}
+inline void Finish(PPCContext& ctx,uint8_t* base) {
+  if(tick_request&back) {
+    ben10_pc_video::release_guard=true;
+    ben10_pc_video::visible=false;
+    active=false;
+  }
+  if(tick_request)pending=0;
+  ReturnNumber(ctx,base,(tick_request&back)?1.0f:0.0f);
+}
+}
+namespace options_hub {
+inline std::atomic<bool> active{false};
+inline std::atomic<bool> credits{false};
+inline std::atomic<unsigned> pending{0};
+inline bool returning=false; // Guest script thread only.
+enum Action : unsigned { Gameplay=1, Sound, Video, Credits, Back };
+
+inline void Show() {
+  ben10_pc_video::controller_sample=0;
+  ben10_pc_video::opening_guard=true;
+  active=true;
+  ben10_pc_video::visible=true;
+}
+template<bool CreditsAvailable> void Open(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  credits=CreditsAvailable;
+  pending=0;
+  returning=false;
+  Show();
+}
+inline void Poll(PPCContext& ctx,uint8_t* base) {
+  if(returning && !ben10_pc_video::CapturesGameInput()) {
+    returning=false;
+    Show();
+  }
+  const auto action=pending.exchange(0);
+  if(action) {
+    active=false;
+    returning=action>=Gameplay && action<=Video;
+    if(!returning) {
+      ben10_pc_video::release_guard=true;
+      ben10_pc_video::visible=false;
+    }
+  }
+  ReturnNumber(ctx,base,float(action));
+}
+}
+inline void OpenVideoPreview(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  ben10_pc_video::controller_sample=0;
+  ben10_pc_video::opening_guard=true;
+  ben10_pc_video::visible=true;
+}
 template<bool Visible> void SetPerformanceOverlay(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);auto* host=runtime.load();if(!host)return;
   try {
@@ -317,9 +544,25 @@ template<bool Visible> void SetPerformanceOverlay(PPCContext& ctx,uint8_t* base)
 }
 inline void OnFrame() {
   auto* host=runtime.load();
-  if(!host || registered.load())return;
+  if(!host)return;
   auto* thread=rex::runtime::ThreadState::Get();
   if(!thread)return;
+  // InputSystem refreshes its device vectors during GetState. The UI must
+  // consume a snapshot rather than entering that code alongside guest input.
+  if(ben10_pc_video::CapturesGameInput()) {
+    auto* input=static_cast<rex::input::InputSystem*>(host->input_system());
+    rex::input::X_INPUT_STATE state{};
+    ben10_pc_video::polling_options=true;
+    if(input)input->GetState(0,&state);
+    ben10_pc_video::polling_options=false;
+    uint32_t sample=ben10_pc_video::sample_valid|state.gamepad.buttons;
+    if(state.gamepad.thumb_lx<-16000)sample|=4;
+    if(state.gamepad.thumb_lx>16000)sample|=8;
+    if(state.gamepad.thumb_ly>16000)sample|=1;
+    if(state.gamepad.thumb_ly<-16000)sample|=2;
+    ben10_pc_video::controller_sample.store(sample,std::memory_order_relaxed);
+  }
+  if(registered.load())return;
   auto* base=host->memory()->virtual_membase();
   // sub_821C1140 stores the script registry here, before registering overlays.
   uint32_t encoded_registry;
@@ -332,7 +575,7 @@ inline void OnFrame() {
   if(!registration) {
     REXLOG_ERROR("Cosmic PC menu: native registration unavailable");return;
   }
-  auto add=[&](const char* name,PPCFunc* function) {
+  auto add=[&](const char* name,PPCFunc* function,uint32_t arguments=1) {
     const uint32_t callback=host->function_dispatcher()->AllocateThunk(function,0);
     const uint32_t text=host->memory()->SystemHeapAlloc(uint32_t(std::strlen(name)+1));
     if(!callback || !text)throw std::runtime_error("PC menu callback allocation failed");
@@ -340,17 +583,57 @@ inline void OnFrame() {
     // A local context keeps all live guest registers intact across the nested call.
     PPCContext context=*thread->context();
     context.r3.u64=registry;context.r4.u64=text;context.r5.u64=text;
-    context.r6.u64=1;context.r7.u64=callback;context.r8.u64=0;
+    context.r6.u64=arguments;context.r7.u64=callback;context.r8.u64=0;
     registration(context,base);
     REXLOG_INFO("Cosmic PC menu: registered {} callback {:08X}, registry {:08X}",name,callback,registry);
   };
   add("cosmic_quit_to_launcher",QuitToLauncher);
+  add("cosmic_preview_video",OpenVideoPreview);
+  add("cosmic_options_open",options_hub::Open<false>);
+  add("cosmic_options_open_credits",options_hub::Open<true>);
+  add("cosmic_options_poll",options_hub::Poll);
+  add("cosmic_sound_open",sound_preview::Open);
+  add("cosmic_sound_begin_tick",sound_preview::BeginTick);
+  add("cosmic_sound_finish",sound_preview::Finish);
+  add("cosmic_sound_music_read",sound_preview::Capture<0>,2);
+  add("cosmic_sound_sfx_read",sound_preview::Capture<1>,2);
+  add("cosmic_sound_voice_read",sound_preview::Capture<2>,2);
+  add("cosmic_sound_music_value",sound_preview::Desired<0>);
+  add("cosmic_sound_sfx_value",sound_preview::Desired<1>);
+  add("cosmic_sound_voice_value",sound_preview::Desired<2>);
+  add("cosmic_gameplay_open",gameplay_preview::Open);
+  add("cosmic_gameplay_finish",gameplay_preview::Finish);
+  add("cosmic_gameplay_begin_tick",gameplay_preview::BeginTick);
+  add("cosmic_gameplay_pitch_preference",gameplay_preview::StockPreference<0>);
+  add("cosmic_gameplay_yaw_preference",gameplay_preview::StockPreference<1>);
+  add("cosmic_gameplay_vibration_preference",gameplay_preview::StockPreference<2>);
+  add("cosmic_gameplay_save_stock",gameplay_preview::SaveStockPreferences);
+  add("cosmic_gameplay_pitch_off",gameplay_preview::Capture<0,false>);
+  add("cosmic_gameplay_pitch_on",gameplay_preview::Capture<0,true>);
+  add("cosmic_gameplay_yaw_off",gameplay_preview::Capture<1,false>);
+  add("cosmic_gameplay_yaw_on",gameplay_preview::Capture<1,true>);
+  add("cosmic_gameplay_vibration_off",gameplay_preview::Capture<2,false>);
+  add("cosmic_gameplay_vibration_on",gameplay_preview::Capture<2,true>);
+  add("cosmic_gameplay_pitch_value",gameplay_preview::Desired<0>);
+  add("cosmic_gameplay_yaw_value",gameplay_preview::Desired<1>);
+  add("cosmic_gameplay_vibration_value",gameplay_preview::Desired<2>);
   add("cosmic_set_720",SetResolution<0>);
   add("cosmic_set_1080",SetResolution<1>);
   add("cosmic_set_1440",SetResolution<2>);
   add("cosmic_set_4k",SetResolution<3>);
   add("cosmic_set_30",SetVideo<-1,30>);
   add("cosmic_set_60",SetVideo<-1,60>);
+  add("cosmic_set_120",SetVideo<-1,120>);
+  add("cosmic_index_scale",ReadGraphics<0>);
+  add("cosmic_index_aa",ReadGraphics<1>);
+  add("cosmic_index_filter",ReadGraphics<2>);
+  add("cosmic_index_sharpen",ReadGraphics<3>);
+  add("cosmic_index_bloom",ReadGraphics<4>);
+  add("cosmic_cycle_scale",CycleGraphics<0>);
+  add("cosmic_cycle_aa",CycleGraphics<1>);
+  add("cosmic_cycle_filter",CycleGraphics<2>);
+  add("cosmic_cycle_sharpen",CycleGraphics<3>);
+  add("cosmic_cycle_bloom",CycleGraphics<4>);
   add("cosmic_set_unlimited",SetVideo<-1,0>);
   add("cosmic_overlay_on",SetPerformanceOverlay<true>);
   add("cosmic_overlay_off",SetPerformanceOverlay<false>);

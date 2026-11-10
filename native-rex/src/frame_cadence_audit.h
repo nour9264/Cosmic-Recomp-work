@@ -14,7 +14,7 @@ struct Audit {
   Clock::time_point window=Clock::now(),previous_entry{},previous_exit{};
   uint64_t frames=0;
   double menu_ms=0,limiter_ms=0,outside_hook_ms=0,entry_intervals_ms=0;
-  std::array<uint64_t,3> rates{};
+  std::array<uint64_t,4> rates{};
   std::array<uint64_t,9> nearest_60hz_ticks{};
   double near_tick_intervals=0;
   static double Ms(Clock::duration d){return std::chrono::duration<double,std::milli>(d).count();}
@@ -32,7 +32,7 @@ struct Audit {
       }
     }
     previous_entry=entry;previous_exit=exit;++frames;
-    ++rates[rate==30?1:rate==60?2:0];
+    ++rates[rate==30?1:rate==60?2:rate==120?3:0];
     if(exit-window<std::chrono::seconds(5))return;
     const auto unix_ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::ofstream file(output,std::ios::app);
@@ -40,7 +40,8 @@ struct Audit {
         <<",\"frames\":"<<frames<<",\"registration_wall_ms\":"<<menu_ms
         <<",\"limiter_wall_ms\":"<<limiter_ms<<",\"outside_hook_wall_ms\":"<<outside_hook_ms
         <<",\"entry_intervals_ms\":"<<entry_intervals_ms<<",\"rate_frames_0_30_60\":["<<rates[0]<<','<<rates[1]<<','<<rates[2]
-        <<"],\"intervals_within_1ms_of_60hz_multiple\":"<<near_tick_intervals<<",\"nearest_60hz_tick_histogram\":[";
+        <<"],\"rate_frames_120\":"<<rates[3]
+        <<",\"intervals_within_1ms_of_60hz_multiple\":"<<near_tick_intervals<<",\"nearest_60hz_tick_histogram\":[";
     for(size_t i=0;i<nearest_60hz_ticks.size();++i){if(i)file<<',';file<<nearest_60hz_ticks[i];}
     file<<"],\"scope\":\"Hook wall time, not thread CPU. Outside hook includes game, graphics backpressure, guest sync and scheduling. Tick histogram is correlation, not proof of vsync.\"}\n";
     window=exit;frames=0;menu_ms=limiter_ms=outside_hook_ms=entry_intervals_ms=near_tick_intervals=0;

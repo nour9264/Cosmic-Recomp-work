@@ -12,7 +12,9 @@ inline std::atomic<bool> visible{false};
 inline std::atomic<bool> release_guard{false};
 inline std::atomic<bool> opening_guard{false};
 inline HANDLE closed_event=nullptr;
-inline thread_local bool polling_ui=false;
+inline thread_local bool polling_options=false;
+inline std::atomic<uint32_t> controller_sample{0};
+inline constexpr uint32_t sample_valid=0x10000;
 inline bool CapturesGameInput(){return visible.load() || release_guard.load();}
 class Dialog final:public rex::ui::ImGuiDialog {
  public:
@@ -31,9 +33,9 @@ class Dialog final:public rex::ui::ImGuiDialog {
   void OnDraw(ImGuiIO& io) override {
     if(!CapturesGameInput())return;
     rex::input::X_INPUT_STATE state{};
-    polling_ui=true;
+    polling_options=true;
     const bool connected=input_ && input_->GetState(0,&state)==0;
-    polling_ui=false;
+    polling_options=false;
     if(release_guard && !state.gamepad.buttons)release_guard=false;
     if(!visible)return;
     if(opening_guard && !state.gamepad.buttons)opening_guard=false;

@@ -368,7 +368,7 @@ index 7642601..b3c043d 100644
   protected:
    void OnDraw(ImGuiIO& io) override;
 diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
-index 19874a5..ce377ba 100644
+index 19874a5..e6a9c2f 100644
 --- a/src/graphics/d3d12/command_processor.cpp
 +++ b/src/graphics/d3d12/command_processor.cpp
 @@ -1,3 +1,4 @@
@@ -578,7 +578,7 @@ index 19874a5..ce377ba 100644
                                     normalized_depth_control, convert_z_to_float24,
                                     host_render_targets_used, ps_writes_depth, viewport_info);
      previous_viewport_key_ = viewport_key;
-@@ -2469,12 +2549,14 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+@@ -2469,13 +2549,18 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
                               primitive_processing_result.host_shader_index_endian, viewport_info,
                               used_texture_mask, normalized_depth_control, normalized_color_mask);
  
@@ -589,19 +589,52 @@ index 19874a5..ce377ba 100644
    }
    // Must not call anything that can change the descriptor heap from now on!
  
+-  // Ensure vertex buffers are resident.
 +  cpu_draw_phase.Mark(ben10_cpu_draw::VertexRanges);
-   // Ensure vertex buffers are resident.
++  // Collect changed fetch ranges before requesting residency for this draw.
++  std::array<std::pair<uint32_t, uint32_t>, 96> pending_vertex_ranges;
++  std::array<uint32_t, 96> pending_vertex_slots;
++  size_t pending_vertex_count = 0;
    const Shader::ConstantRegisterMap& constant_map_vertex = vertex_shader->constant_register_map();
    for (uint32_t i = 0; i < rex::countof(constant_map_vertex.vertex_fetch_bitmap); ++i) {
-@@ -2524,6 +2606,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+     uint32_t vfetch_bits_remaining = constant_map_vertex.vertex_fetch_bitmap[i];
+@@ -2511,19 +2596,25 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+         vertex_buffers_in_sync_[vfetch_index >> 6] |= vfetch_bit;
+         continue;
+       }
+-      if (!shared_memory_->RequestRange(vfetch_constant.address << 2, vfetch_constant.size << 2)) {
+-        REXGPU_ERROR(
+-            "Failed to request vertex buffer at 0x{:08X} (size {}) in the "
+-            "shared memory",
+-            vfetch_constant.address << 2, vfetch_constant.size << 2);
+-        return false;
+-      }
+-      state.address = vfetch_constant.address;
+-      state.size = vfetch_constant.size;
+-      vertex_buffers_in_sync_[vfetch_index >> 6] |= vfetch_bit;
++      pending_vertex_ranges[pending_vertex_count] = {vfetch_constant.address << 2,
++                                                     vfetch_constant.size << 2};
++      pending_vertex_slots[pending_vertex_count++] = vfetch_index;
      }
    }
++  if (pending_vertex_count &&
++      !shared_memory_->RequestRanges(pending_vertex_ranges.data(), pending_vertex_count)) {
++    REXGPU_ERROR("Failed to request vertex buffers in shared memory");
++    return false;
++  }
++  for (size_t i = 0; i < pending_vertex_count; ++i) {
++    const uint32_t slot = pending_vertex_slots[i];
++    const auto [address, size] = pending_vertex_ranges[i];
++    vertex_buffer_states_[slot].address = address >> 2;
++    vertex_buffer_states_[slot].size = size >> 2;
++    vertex_buffers_in_sync_[slot >> 6] |= uint64_t(1) << (slot & 63);
++  }
  
 +  cpu_draw_phase.Mark(ben10_cpu_draw::Memexport);
    // Gather memexport ranges and ensure the heaps for them are resident, and
    // also load the data surrounding the export and to fill the regions that
    // won't be modified by the shaders.
-@@ -2553,6 +2636,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+@@ -2553,6 +2644,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
      }
    }
  
@@ -609,7 +642,7 @@ index 19874a5..ce377ba 100644
    // Primitive topology.
    D3D_PRIMITIVE_TOPOLOGY primitive_topology;
    if (primitive_processing_result.IsTessellated()) {
-@@ -2617,6 +2701,18 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+@@ -2617,6 +2709,53 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
    SetPrimitiveTopology(primitive_topology);
    // Must not call anything that may change the primitive topology from now on!
  
@@ -623,12 +656,47 @@ index 19874a5..ce377ba 100644
 +        regs.Get<reg::RB_STENCILREFMASK>(XE_GPU_REG_RB_STENCILREFMASK_BF).value,sc.value,
 +        vertex_shader->ucode_data_hash(),pixel_shader ? pixel_shader->ucode_data_hash() : 0,
 +        primitive_processing_result.host_draw_vertex_count);
++    // The colorless stencil draw stays active. Isolate its two color-writing
++    // consumers only after the candidate stencil state appears in gameplay.
++    static thread_local uint64_t shadow_frame = UINT64_MAX;
++    const auto vs_hash = vertex_shader->ucode_data_hash();
++    if (eligible && !pixel_shader && !normalized_color_mask &&
++        normalized_depth_control.value == 0xc87e0793 &&
++        vs_hash == 0x8c1081e2bc698c9dULL) {
++      shadow_frame = frame_current_;
++    }
++    if (shadow_frame != UINT64_MAX && frame_current_ - shadow_frame <= 2 &&
++        !memexport_used && pixel_shader && normalized_color_mask == 15) {
++      const auto ps_hash = pixel_shader->ucode_data_hash();
++      const auto count = primitive_processing_result.host_draw_vertex_count;
++      const bool geometry = vs_hash == 0x2fd14d3d03c603f3ULL &&
++                            ps_hash == 0x3cc2a52f0a5cb063ULL &&
++                            normalized_depth_control.value == 0xc8700563 && count == 132;
++      const bool triangle = vs_hash == 0x1e6883fccde1f688ULL &&
++                            ps_hash == 0xa4a965c189287b99ULL &&
++                            normalized_depth_control.value == 0x8777 && count == 3;
++      if (geometry || triangle) {
++        struct ProbeKey { uint64_t frame = UINT64_MAX; bool held = false; };
++        static thread_local ProbeKey keys[2];
++        auto& key = keys[triangle ? 1 : 0];
++        if (key.frame != frame_current_) {
++          key.frame = frame_current_;
++          const bool held = (GetAsyncKeyState(triangle ? VK_F10 : VK_F9) & 0x8000) != 0;
++          if (held != key.held) {
++            REXLOG_INFO("Cosmic shadow probe: {} draw {}", triangle ? "triangle" : "geometry",
++                        held ? "suppressed" : "restored");
++          }
++          key.held = held;
++        }
++        if (key.held) return true;
++      }
++    }
 +  }
 +
    // Draw.
    if (primitive_processing_result.index_buffer_type ==
        PrimitiveProcessor::ProcessedIndexBufferType::kNone) {
-@@ -2628,8 +2724,38 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+@@ -2628,8 +2767,38 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
      SubmitBarriers();
      PROFILE_DRAW_CALL();
      PROFILE_VERTICES(primitive_processing_result.host_draw_vertex_count);
@@ -667,7 +735,7 @@ index 19874a5..ce377ba 100644
    } else {
      D3D12_INDEX_BUFFER_VIEW index_buffer_view;
      index_buffer_view.SizeInBytes = primitive_processing_result.host_draw_vertex_count;
-@@ -2687,8 +2813,38 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+@@ -2687,8 +2856,38 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
      SubmitBarriers();
      PROFILE_DRAW_CALL();
      PROFILE_VERTICES(primitive_processing_result.host_draw_vertex_count);
@@ -706,7 +774,7 @@ index 19874a5..ce377ba 100644
      if (scratch_index_buffer != nullptr) {
        ReleaseScratchGPUBuffer(scratch_index_buffer, D3D12_RESOURCE_STATE_INDEX_BUFFER);
      }
-@@ -3118,7 +3274,7 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
+@@ -3118,7 +3317,7 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
                      SUCCEEDED(queue_operations_since_submission_fence_->SetEventOnCompletion(
                          fence_value, fence_completion_event_)))) {
          PROFILE_CMD_BUFFER_STALL();
@@ -715,7 +783,7 @@ index 19874a5..ce377ba 100644
          queue_operations_done_since_submission_signal_ = false;
        } else {
          REXGPU_ERROR(
-@@ -3137,7 +3293,7 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
+@@ -3137,7 +3336,7 @@ void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
      if (SUCCEEDED(
              submission_fence_->SetEventOnCompletion(await_submission, fence_completion_event_))) {
        PROFILE_CMD_BUFFER_STALL();
@@ -724,7 +792,7 @@ index 19874a5..ce377ba 100644
        submission_completed_ = submission_fence_->GetCompletedValue();
      }
    }
-@@ -3372,6 +3528,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -3372,6 +3571,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
  }
  
  bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
@@ -732,7 +800,7 @@ index 19874a5..ce377ba 100644
    const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
  
    // Make sure there is a command allocator to write commands to.
-@@ -3425,7 +3582,9 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+@@ -3425,7 +3625,9 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
          command_allocator_writable_first_->command_allocator;
      command_allocator->Reset();
      command_list_->Reset(command_allocator, nullptr);
@@ -742,7 +810,7 @@ index 19874a5..ce377ba 100644
      command_list_->Close();
      ID3D12CommandList* execute_command_lists[] = {command_list_};
      direct_queue->ExecuteCommandLists(1, execute_command_lists);
-@@ -4538,7 +4697,10 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+@@ -4538,7 +4740,10 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
        view_cpu_handle.ptr += descriptor_size_view;
        view_gpu_handle.ptr += descriptor_size_view;
        if (edram_rov_used) {
@@ -754,7 +822,7 @@ index 19874a5..ce377ba 100644
          view_cpu_handle.ptr += descriptor_size_view;
          view_gpu_handle.ptr += descriptor_size_view;
        }
-@@ -4551,7 +4713,10 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+@@ -4551,7 +4756,10 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
        view_cpu_handle.ptr += descriptor_size_view;
        view_gpu_handle.ptr += descriptor_size_view;
        if (edram_rov_used) {
@@ -2470,18 +2538,20 @@ index a7d508a..dc99504 100644
    // Convert according to the format.
    a_.OpIf(true, dxbc::Src::R(temp_temp).Select(temp_temp_component));
 diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
-index ec0df7c..7c7e83c 100644
+index ec0df7c..d78314a 100644
 --- a/src/graphics/shared_memory.cpp
 +++ b/src/graphics/shared_memory.cpp
-@@ -12,6 +12,7 @@
+@@ -11,7 +11,9 @@
+ 
  #include <algorithm>
  #include <cstring>
++#include <span>
  #include <utility>
 +#include "@COSMIC_CONSUMER@/shared_memory_audit.h"
  
  #include <rex/assert.h>
  #include <rex/bit.h>
-@@ -338,7 +339,9 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
+@@ -338,57 +340,77 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
  }
  
  bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, size_t count) {
@@ -2491,18 +2561,93 @@ index ec0df7c..7c7e83c 100644
      return true;
    }
  
-@@ -357,6 +360,7 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
-     merged_ranges.emplace_back(start, length);
-   }
-   if (merged_ranges.empty()) {
-+    audit.succeeded=true;
-     return true;
-   }
+-  // Some texture or buffer is empty, for example - safe to draw in this case.
+-  std::vector<std::pair<uint32_t, uint32_t>> merged_ranges;
+-  merged_ranges.reserve(count);
+-  for (size_t i = 0; i < count; ++i) {
+-    uint32_t start = ranges[i].first;
+-    uint32_t length = ranges[i].second;
++  // A single fetch range needs validation, but no allocation, sort, or merge.
++  std::span<const std::pair<uint32_t, uint32_t>> merged_ranges;
++  std::vector<std::pair<uint32_t, uint32_t>> range_storage;
++  if (count == 1) {
++    const auto [start, length] = ranges[0];
+     if (!length) {
+-      continue;
++      audit.succeeded = true;
++      return true;
+     }
+     if (start > kBufferSize || (kBufferSize - start) < length) {
+       return false;
+     }
+-    merged_ranges.emplace_back(start, length);
+-  }
+-  if (merged_ranges.empty()) {
+-    return true;
+-  }
+-
+-  SCOPE_profile_cpu_f("gpu");
++    merged_ranges = {ranges, 1};
++  } else {
++    range_storage.reserve(count);
++    for (size_t i = 0; i < count; ++i) {
++      uint32_t start = ranges[i].first;
++      uint32_t length = ranges[i].second;
++      if (!length) {
++        continue;
++      }
++      if (start > kBufferSize || (kBufferSize - start) < length) {
++        return false;
++      }
++      range_storage.emplace_back(start, length);
++    }
++    if (range_storage.empty()) {
++      audit.succeeded=true;
++      return true;
++    }
  
-@@ -383,12 +387,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+-  std::sort(merged_ranges.begin(), merged_ranges.end(),
+-            [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
+-              return a.first < b.first;
+-            });
+-  size_t merged_write = 0;
+-  for (size_t i = 1; i < merged_ranges.size(); ++i) {
+-    std::pair<uint32_t, uint32_t>& range_previous = merged_ranges[merged_write];
+-    const std::pair<uint32_t, uint32_t>& range_current = merged_ranges[i];
+-    uint64_t previous_end = uint64_t(range_previous.first) + uint64_t(range_previous.second);
+-    uint64_t current_start = uint64_t(range_current.first);
+-    if (current_start <= previous_end) {
+-      uint64_t current_end = current_start + uint64_t(range_current.second);
+-      if (current_end > previous_end) {
+-        range_previous.second = uint32_t(current_end - uint64_t(range_previous.first));
++    std::sort(range_storage.begin(), range_storage.end(),
++              [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
++                return a.first < b.first;
++              });
++    size_t merged_write = 0;
++    for (size_t i = 1; i < range_storage.size(); ++i) {
++      std::pair<uint32_t, uint32_t>& range_previous = range_storage[merged_write];
++      const std::pair<uint32_t, uint32_t>& range_current = range_storage[i];
++      uint64_t previous_end = uint64_t(range_previous.first) + uint64_t(range_previous.second);
++      uint64_t current_start = uint64_t(range_current.first);
++      if (current_start <= previous_end) {
++        uint64_t current_end = current_start + uint64_t(range_current.second);
++        if (current_end > previous_end) {
++          range_previous.second = uint32_t(current_end - uint64_t(range_previous.first));
++        }
++      } else {
++        range_storage[++merged_write] = range_current;
+       }
+-    } else {
+-      merged_ranges[++merged_write] = range_current;
+     }
++    range_storage.resize(merged_write + 1);
++    merged_ranges = range_storage;
    }
-   merged_ranges.resize(merged_write + 1);
+-  merged_ranges.resize(merged_write + 1);
  
++  SCOPE_profile_cpu_f("gpu");
++
 +  audit.Mark(ben10_shared_audit::Allocation);
    for (const std::pair<uint32_t, uint32_t>& range : merged_ranges) {
 +    if(audit.enabled)ben10_shared_audit::totals.requested_bytes+=range.second;
@@ -2515,7 +2660,7 @@ index ec0df7c..7c7e83c 100644
    upload_ranges_.clear();
    auto append_upload_range = [this](uint32_t page_start, uint32_t page_count) {
      if (!page_count) {
-@@ -404,12 +411,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+@@ -404,12 +426,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
      upload_ranges_.emplace_back(page_start, page_count);
    };
    {
@@ -2531,7 +2676,7 @@ index ec0df7c..7c7e83c 100644
        uint32_t range_start = UINT32_MAX;
        for (uint32_t i = block_first; i <= block_last; ++i) {
          uint64_t block_valid = system_page_flags_valid_[i];
-@@ -455,6 +465,8 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+@@ -455,6 +480,8 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
      }
    }
  
@@ -2540,7 +2685,7 @@ index ec0df7c..7c7e83c 100644
    COUNT_profile_set("gpu/shared_memory/request_ranges_count", uint32_t(count));
    COUNT_profile_set("gpu/shared_memory/request_ranges_merged_count",
                      uint32_t(merged_ranges.size()));
-@@ -462,10 +474,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+@@ -462,10 +489,15 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
                      uint32_t(upload_ranges_.size()));
  
    if (upload_ranges_.empty()) {
@@ -2585,15 +2730,16 @@ diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
 index 306118e..85b59c9 100644
 --- a/src/ui/d3d12/d3d12_presenter.cpp
 +++ b/src/ui/d3d12/d3d12_presenter.cpp
-@@ -14,6 +14,7 @@
+@@ -14,6 +14,8 @@
  #include <cmath>
  #include <memory>
++#include <d3dcompiler.h>
  #include <utility>
 +#include "@COSMIC_CONSUMER@/presentation_motion_audit.h"
  
  #include <rex/assert.h>
  #include <rex/cvar.h>
-@@ -588,12 +589,15 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+@@ -588,12 +590,15 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
    GuestOutputProperties guest_output_properties;
    GuestOutputPaintConfig guest_output_paint_config;
    Microsoft::WRL::ComPtr<ID3D12Resource> guest_output_resource;
@@ -2609,7 +2755,7 @@ index 306118e..85b59c9 100644
      }
      // Incremented the reference count of the guest output resource - safe to
      // leave the consumer critical section now as everything here either will be
-@@ -1155,9 +1159,16 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+@@ -1155,9 +1160,16 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
    // fullscreen is ever used in, the allow tearing flag must not be passed in
    // fullscreen, but DXGI fullscreen is largely unneeded with the flip
    // presentation model used in Direct3D 12).
@@ -2629,6 +2775,91 @@ index 306118e..85b59c9 100644
    // Even if presentation has failed, work might have been enqueued anyway
    // internally before the failure according to Jesse Natalie from the DirectX
    // Discord server.
+@@ -1349,13 +1361,82 @@ bool D3D12Presenter::InitializeSurfaceIndependent() {
+   guest_output_paint_pipeline_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+   guest_output_paint_pipeline_desc.NumRenderTargets = 1;
+   guest_output_paint_pipeline_desc.SampleDesc.Count = 1;
++  // Original uses the SDK bytecode. Sharpen only the presented game image.
++  std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(&FreeLibrary)> sharpening_compiler(nullptr, FreeLibrary);
++  Microsoft::WRL::ComPtr<ID3DBlob> sharpen_shader;
++  auto read_strength = [](const wchar_t* key, const char* low, const char* medium, const char* high) -> const char* {
++    wchar_t value[16]{};
++    const DWORD length = GetEnvironmentVariableW(key, value, DWORD(std::size(value)));
++    if (!length || length >= std::size(value)) return nullptr;
++    const std::wstring_view level(value, length);
++    return level == L"low" ? low : level == L"medium" ? medium : level == L"high" ? high : nullptr;
++  };
++  const char* strength = read_strength(L"BEN10_SHARPENING", "0.12", "0.24", "0.38");
++  const char* bloom = read_strength(L"BEN10_SCREEN_BLOOM", "0.12", "0.25", "0.42");
++  if (strength || bloom) {
++    static constexpr char source[] = R"(
++      Texture2D<float4> image : register(t0);
++      SamplerState bilinear : register(s0);
++      cbuffer Output : register(b0) { int2 origin; float2 inverse_size; };
++      float3 highlights(float3 color) {
++        float brightness = max(color.r, max(color.g, color.b));
++        return color * smoothstep(0.66, 0.94, brightness);
++      }
++      float4 main(float4 position : SV_Position) : SV_Target {
++        float2 uv = (float2(int2(position.xy) - origin) + 0.5) * inverse_size;
++        uint w, h;
++        image.GetDimensions(w, h);
++        float2 step = 1.0 / float2(w, h);
++        float3 center = image.SampleLevel(bilinear, uv, 0).rgb;
++        #if USE_SHARPEN
++        float3 neighbors = (
++          image.SampleLevel(bilinear, uv + float2(step.x, 0), 0).rgb +
++          image.SampleLevel(bilinear, uv - float2(step.x, 0), 0).rgb +
++          image.SampleLevel(bilinear, uv + float2(0, step.y), 0).rgb +
++          image.SampleLevel(bilinear, uv - float2(0, step.y), 0).rgb) * 0.25;
++        float3 output_color = center + STRENGTH * (center - neighbors);
++        #else
++        float3 output_color = center;
++        #endif
++        #if USE_BLOOM
++        float2 radius = step * 3.0;
++        float3 glow = (
++          highlights(image.SampleLevel(bilinear, uv + radius, 0).rgb) +
++          highlights(image.SampleLevel(bilinear, uv - radius, 0).rgb) +
++          highlights(image.SampleLevel(bilinear, uv + float2(radius.x, -radius.y), 0).rgb) +
++          highlights(image.SampleLevel(bilinear, uv + float2(-radius.x, radius.y), 0).rgb)) * 0.25;
++        output_color += BLOOM * glow;
++        #endif
++        return float4(saturate(output_color), 1);
++      })";
++    HMODULE compiler = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
++    if (compiler) {
++      auto compile = reinterpret_cast<decltype(&D3DCompile)>(GetProcAddress(compiler, "D3DCompile"));
++      if (compile) {
++        const D3D_SHADER_MACRO defines[] = {
++            {"USE_SHARPEN", strength ? "1" : "0"}, {"STRENGTH", strength ? strength : "0"},
++            {"USE_BLOOM", bloom ? "1" : "0"}, {"BLOOM", bloom ? bloom : "0"},
++            {nullptr, nullptr}};
++        Microsoft::WRL::ComPtr<ID3DBlob> errors;
++        if (FAILED(compile(source, sizeof(source) - 1, "CosmicSharpen", defines, nullptr,
++                           "main", "ps_5_1", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
++                           sharpen_shader.GetAddressOf(), errors.GetAddressOf()))) {
++          REXLOG_ERROR("Cosmic output shader failed to compile: {}",
++                       errors ? static_cast<const char*>(errors->GetBufferPointer()) : "no diagnostics");
++        }
++      }
++      sharpening_compiler.reset(compiler);
++    }
++    if (!sharpen_shader) REXLOG_WARN("Cosmic output effects unavailable; using original presentation");
++    else REXLOG_INFO("Cosmic output effects: sharpening={}, bloom={}", strength ? strength : "original", bloom ? bloom : "original");
++  }
+   for (size_t i = 0; i < size_t(GuestOutputPaintEffect::kCount); ++i) {
+     GuestOutputPaintEffect guest_output_paint_effect = GuestOutputPaintEffect(i);
+     switch (guest_output_paint_effect) {
+       case GuestOutputPaintEffect::kBilinear:
+-        guest_output_paint_pipeline_desc.PS.pShaderBytecode = shaders::guest_output_bilinear_ps;
++        guest_output_paint_pipeline_desc.PS.pShaderBytecode = sharpen_shader ? sharpen_shader->GetBufferPointer() : shaders::guest_output_bilinear_ps;
+         guest_output_paint_pipeline_desc.PS.BytecodeLength =
+-            sizeof(shaders::guest_output_bilinear_ps);
++            sharpen_shader ? sharpen_shader->GetBufferSize() : sizeof(shaders::guest_output_bilinear_ps);
+         break;
+       case GuestOutputPaintEffect::kBilinearDither:
+         guest_output_paint_pipeline_desc.PS.pShaderBytecode =
 diff --git a/src/ui/imgui_drawer.cpp b/src/ui/imgui_drawer.cpp
 index f270f3c..40b29b2 100644
 --- a/src/ui/imgui_drawer.cpp

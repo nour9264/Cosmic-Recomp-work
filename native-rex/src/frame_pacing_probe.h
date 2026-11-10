@@ -15,10 +15,11 @@ class Pacer {
     const char* value=std::getenv("BEN10_FRAME_PACING_HZ");
     if(value && std::strcmp(value,"30")==0)SetRate(30);
     else if(value && std::strcmp(value,"60")==0)SetRate(60);
+    else if(value && std::strcmp(value,"120")==0)SetRate(120);
   }
   ~Pacer(){if(timer_)CloseHandle(timer_);}
   bool SetRate(unsigned rate) {
-    if(rate!=0 && rate!=30 && rate!=60)return false;
+    if(rate!=0 && rate!=30 && rate!=60 && rate!=120)return false;
     std::lock_guard guard(mutex_);
     if(!rate){started_=false;next_={};rate_.store(0,std::memory_order_relaxed);return true;}
     if(!timer_)timer_=CreateWaitableTimerExW(nullptr,nullptr,0x00000002,TIMER_MODIFY_STATE|SYNCHRONIZE);

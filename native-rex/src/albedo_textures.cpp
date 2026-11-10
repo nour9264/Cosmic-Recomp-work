@@ -339,9 +339,10 @@ template<int Pack>
 void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
                uint32_t& base_word, uint32_t& mip_word) {
   const uint32_t format = base_word & 63;
+  const auto key = albedo_hud::texture_key;
   const uint32_t width = (size & 8191) + 1, height = ((size >> 13) & 8191) + 1;
   if constexpr (Pack != 0) {
-    const auto key = albedo_hud::texture_key;
+
     const bool known = key == 0x10fbcff1 || key == 0x9fbb3a51 ||
                        key == 0x2d9be641 || key == 0x575bb521;
     static thread_local std::array<uint32_t, 48> audited{};
@@ -371,21 +372,21 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
   // current submitted frame, then recheck the signature if pages are reused.
   struct CachedBind {
     uint64_t frame = UINT64_MAX;
-    uint32_t size = 0, base = 0, mip = 0, format = 0;
+    uint32_t size = 0, base = 0, mip = 0, format = 0, key = 0;
     uint32_t replacement_base = 0, replacement_mip = 0;
   };
   static thread_local std::array<CachedBind, 512> cache{};
   const auto frame = Ben10SubmittedFrames();
   auto& cached = cache[((base >> 12) * 31u + (mip >> 12)) % cache.size()];
   if (cached.frame == frame && cached.size == size && cached.base == base && cached.mip == mip &&
-      cached.format == format) {
+      cached.format == format && cached.key == key) {
     if (cached.replacement_base) {
       base_word = (base_word & ~page_mask) | cached.replacement_base;
       mip_word = (mip_word & ~page_mask) | cached.replacement_mip;
     }
     return;
   }
-  cached = {frame, size, base, mip, format};
+  cached = {frame, size, base, mip, format, key};
   static std::mutex lock;
   std::lock_guard guard(lock);
   static auto textures = [] {
@@ -411,12 +412,18 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
     prefix = Fingerprint(source + second, 64, Fingerprint(source + first, 64));
   }
   for (auto& item : textures) {
-    const bool matching_icon_key = Pack != 0 && albedo_hud::texture_key == item.key;
-    const bool base_only = !mip && (Pack != 0 || item.key == 0xe9c69775);
+    // Stock UI sprites have stable archive IDs. Their runtime padding or
+    // mip upload can differ from the original archive, so use that identity
+    // together with the exact fetch dimensions and format.
+    const bool menu_trim = item.key == 0xa57fdd41 || item.key == 0x8f250b9a;
+    const bool matching_key = (Pack != 0 || menu_trim) && key == item.key;
+    // The stock menu also binds these textures without their mip pages.
+    const bool bezel = item.key == 0xc8c35802;
+    const bool base_only = !mip && (Pack != 0 || menu_trim || bezel || item.key == 0xe9c69775);
     if (item.width != width || item.height != height || item.format != format ||
-        item.base_size != base_size || (!matching_icon_key && item.prefix_hash != prefix) ||
+        item.base_size != base_size || (!matching_key && item.prefix_hash != prefix) ||
         (!base_only && (item.mip_size != 0) != (mip != 0))) continue;
-    if (!matching_icon_key && (item.verified_base != base || item.verified_mip != mip)) {
+    if (!matching_key && (item.verified_base != base || item.verified_mip != mip)) {
       if constexpr (Pack != 0) {
         uint64_t active = 14695981039346656037ull;
         for (uint32_t y = 0; y < blocks; ++y)
