@@ -674,11 +674,13 @@ namespace CosmicRecompi {
             alignedPreview=AllAliensPatch.SyncLauncherGameplay(alignedPreview);
             alignedStock=AllAliensPatch.SyncLauncherGameplay(alignedStock);
 #endif
-            bool usePreview=Environment.GetEnvironmentVariable("BEN10_OPTIONS_VIDEO_PREVIEW")=="1" ||
-                File.Exists(Path.Combine(Path.GetDirectoryName(gameFolder),"user","options-video-preview"));
             byte[] cheatPreview=AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedPreview);
             byte[] cheatStock=AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedStock);
-            updated=usePreview?cheatPreview:cheatStock;
+#if COSMIC_HERO_TIME && COSMIC_NATIVE_SETTINGS
+            updated=cheatPreview;
+#else
+            updated=cheatStock;
+#endif
             byte[] current=File.ReadAllBytes(frontend),currentEnglish=File.ReadAllBytes(english);
             string expected=Hash(updated),expectedEnglish=Hash(updatedEnglish),currentHash=Hash(current);
             if(currentHash==expected && Hash(currentEnglish)==expectedEnglish) { EnsurePauseHighlight(scripts);return; }

@@ -131,7 +131,7 @@ namespace CosmicRecompi {
             if (File.Exists(target)) {
                 using (var reader = new BinaryReader(File.OpenRead(target))) {
                     if (reader.BaseStream.Length > 12 &&
-                        reader.ReadUInt64() == 0x0000000244424c41UL &&
+                        reader.ReadUInt64() == 0x0000000344424c41UL &&
                         reader.ReadUInt32() == (hasFourArms ? 29u : 28u)) return;
                 }
             }
@@ -241,8 +241,6 @@ namespace CosmicRecompi {
             foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
                 if (((string)variable.Key).StartsWith("BEN10_", StringComparison.OrdinalIgnoreCase)) start.EnvironmentVariables.Remove((string)variable.Key);
             start.EnvironmentVariables["BEN10_PORTABLE_ROOT"] = folder;
-            if (Environment.GetEnvironmentVariable("BEN10_OPTIONS_VIDEO_PREVIEW") == "1")
-                start.EnvironmentVariables["BEN10_OPTIONS_VIDEO_PREVIEW"] = "1";
             string introSetting = Path.Combine(folder, "user", "skip-intro.txt");
             bool skipIntro = File.Exists(introSetting) && File.ReadAllText(introSetting).Trim() == "on";
             if (skipIntro) start.EnvironmentVariables["BEN10_SKIP_INTRO"] = "1";

@@ -230,7 +230,9 @@ inline std::vector<Texture> ReadPack(const std::filesystem::path& path) {
   uint32_t count = 0;
   file.read(magic, sizeof(magic));
   file.read(reinterpret_cast<char*>(&count), sizeof(count));
-  if (!file || std::string_view(magic, 8) != std::string_view("ALBD\2\0\0\0", 8) ||
+  const std::string_view version(magic, sizeof(magic));
+  if (!file || (version != std::string_view("ALBD\2\0\0\0", 8) &&
+                version != std::string_view("ALBD\3\0\0\0", 8)) ||
       !count || count > 32) return {};
   std::vector<Texture> textures;
   for (uint32_t i = 0; i < count; ++i) {

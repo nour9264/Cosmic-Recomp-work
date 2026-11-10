@@ -136,7 +136,7 @@ def prepare(originals, output, four_arms=None):
         # The Four Arms player mesh uses this diffuse atlas for its eyes
         # and chest badge. Leave its other material maps intact.
         actors += ((four_arms.resolve(), 256, 0xdc07749a, 'alien'),)
-    pack = bytearray(b'ALBD\x02\x00\x00\x00')
+    pack = bytearray(b'ALBD\x03\x00\x00\x00')
     pack += struct.pack('<I', len(actors))
     for archive, offset, key, kind in actors:
         record = table((originals / archive).read_bytes()[offset:])[key]

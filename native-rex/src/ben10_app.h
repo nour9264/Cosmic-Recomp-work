@@ -34,10 +34,6 @@ class Ben10App : public rex::ReXApp {
   void OnConfigureFonts(ImFontAtlas* atlas) override {
     if(!ben10_pc_menu::enabled())return;
     const auto user=std::filesystem::current_path()/"user";
-    const char* preview=std::getenv("BEN10_OPTIONS_VIDEO_PREVIEW");
-    const bool preview_enabled=(preview && std::strcmp(preview,"1")==0) ||
-                               std::filesystem::exists(user/"options-video-preview");
-    if(!preview_enabled)return;
     char windows[MAX_PATH]{};
     if(GetWindowsDirectoryA(windows,MAX_PATH)) {
       const auto fonts=std::filesystem::path(windows)/"Fonts";
