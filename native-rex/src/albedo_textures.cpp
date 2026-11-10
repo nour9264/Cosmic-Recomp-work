@@ -34,7 +34,7 @@ struct Sprite {
   uint32_t physical_address = 0;
 };
 std::array<Sprite, 16> sprites;
-int WorldPromptFace(rex::memory::Memory& mem, uint32_t base);
+int WorldPromptFace(rex::memory::Memory& mem, uint32_t base, uint32_t blocks);
 
 const std::vector<uint8_t>& SpritePixels() {
   static const auto pixels = [] {
@@ -99,10 +99,12 @@ bool BindPromptSprite(uint32_t& flags, uint32_t& size, uint32_t& base_word, uint
   if (index < 0) {
     constexpr uint32_t size_mask = (1u << 26) - 1;
     constexpr uint32_t size_64 = (63u << 13) | 63u;
-    if ((base_word & 63) != 20 || (size & size_mask) != size_64) return false;
+    constexpr uint32_t size_128 = (127u << 13) | 127u;
+    const auto dimensions = size & size_mask;
+    if ((base_word & 63) != 20 || (dimensions != size_64 && dimensions != size_128)) return false;
     const auto mode = button_icons.load(std::memory_order_relaxed);
     if (mode != ButtonIcons::PlayStation && mode != ButtonIcons::Keyboard) return false;
-    const int face = WorldPromptFace(*mem, base_word & kPageMask);
+    const int face = WorldPromptFace(*mem, base_word & kPageMask, dimensions == size_64 ? 16 : 32);
     if (face < 0 || !HasPromptSprites()) return false;
     constexpr int playstation_faces[] = {0, 3, 1, 2};
     index = mode == ButtonIcons::Keyboard ? 12 + face : playstation_faces[face];
@@ -351,10 +353,10 @@ inline bool Readable(rex::memory::Memory& mem, uint32_t address, uint32_t size) 
 }
 
 namespace {
-int WorldPromptFace(rex::memory::Memory& mem, uint32_t base) {
-  // Active BC3 blocks from the 24 standalone A/B/X/Y textures in gtex_s.xbx.
+int WorldPromptFace(rex::memory::Memory& mem, uint32_t base, uint32_t blocks) {
+  // Active BC3 blocks from the world prompts and circular QTE icons in gtex_s.xbx.
   // Ignore padding and require a full active-image match when there is no key.
-  struct Signature { uint32_t key; uint64_t prefix, image; int face; };
+  struct Signature { uint32_t key; uint64_t prefix, image; int face; uint32_t blocks = 16; };
   static constexpr Signature prompts[] = {
     {0xd82646fd, 0x825ba350b2cbbbd8ull, 0x1044ae59ed081fbcull, 0},
     {0x5556421e, 0x1ab37128ff9d88b3ull, 0x4a3b9c3ea7aa832full, 0},
@@ -380,22 +382,29 @@ int WorldPromptFace(rex::memory::Memory& mem, uint32_t base) {
     {0x62bafe3c, 0x77b616248c473d3cull, 0x66480c1be61f470dull, 3},
     {0x436bd341, 0xa4fe78a6b48f424dull, 0xa0963489595711fbull, 3},
     {0x77786c63, 0xde19b722ad1c462eull, 0x03ece4d3030ebb07ull, 3},
+    {0x10fbcff1, 0xdf4e1319c0e84456ull, 0x5ca95f710e03f31dull, 0, 32},
+    {0x9fbb3a51, 0xcd830a98b913b6c8ull, 0xf01e5da225d1b317ull, 1, 32},
+    {0x2d9be641, 0x8bbfa746a837b172ull, 0x00ee56e2552b0859ull, 2, 32},
+    {0x575bb521, 0x4796f14638699ebfull, 0x13f1a08ae3646e4full, 3, 32},
   };
   const auto key = albedo_hud::texture_key;
   for (const auto& prompt : prompts)
-    if (prompt.key == key) return prompt.face;
+    if (prompt.blocks == blocks && prompt.key == key) return prompt.face;
   if (!base || base > 0x20000000 - kSpritePage || !Readable(mem, base, kSpritePage)) return -1;
   const auto* source = mem.TranslatePhysical(base);
-  const auto prefix = Fingerprint(source + IconBlockOffset(8, 6), 16,
-                                  Fingerprint(source + IconBlockOffset(8, 8), 16));
+  const auto center = blocks / 2;
+  const auto prefix = Fingerprint(source + IconBlockOffset(center, center - 2), 16,
+                                  Fingerprint(source + IconBlockOffset(center, center), 16));
   if (std::none_of(std::begin(prompts), std::end(prompts),
-                   [prefix](const Signature& prompt) { return prompt.prefix == prefix; })) return -1;
+                   [prefix, blocks](const Signature& prompt) {
+                     return prompt.blocks == blocks && prompt.prefix == prefix;
+                   })) return -1;
   uint64_t image = 14695981039346656037ull;
-  for (uint32_t y = 0; y < 16; ++y)
-    for (uint32_t x = 0; x < 16; ++x)
+  for (uint32_t y = 0; y < blocks; ++y)
+    for (uint32_t x = 0; x < blocks; ++x)
       image = Fingerprint(source + IconBlockOffset(x, y), 16, image);
   for (const auto& prompt : prompts)
-    if (prompt.prefix == prefix && prompt.image == image) return prompt.face;
+    if (prompt.blocks == blocks && prompt.prefix == prefix && prompt.image == image) return prompt.face;
   return -1;
 }
 }

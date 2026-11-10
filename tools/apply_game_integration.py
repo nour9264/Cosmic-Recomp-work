@@ -363,4 +363,17 @@ for name, hooks in intro_player_hooks.items():
     p.write_text((header if header not in text else "") + text[:start] + body + text[end:])
     changes += 1
 
+# The final battle can enter Pause without a row layout object. Skip only the
+# missing object's pause anchor assignment, before the field lookup reads it.
+name = 'sub_82239768'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+entry = f'DEFINE_REX_FUNC({name}) {{\n\tREX_FUNC_PROLOGUE();'
+guard = entry + '\n\tif (!ctx.r3.u32 && ctx.r4.u32 == 0xb87458ce) return;'
+if guard not in text:
+    if text.count(entry) != 1:
+        raise RuntimeError('Unexpected pause anchor setter entry')
+    p.write_text(text.replace(entry, guard))
+    changes += 1
+
 print('PC integration applied to',changes,'locally generated functions.')
