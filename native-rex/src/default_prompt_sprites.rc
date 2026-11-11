@@ -1,1 +1,5 @@
 102 RCDATA "default_prompt_sprites.bin"
+103 RCDATA "keyboard_prompt_sprites.bin"
+104 RCDATA "keyboard_prompt_icons.bin"
+105 RCDATA "xbox_prompt_sprites.bin"
+106 RCDATA "modern_face_icons.bin"

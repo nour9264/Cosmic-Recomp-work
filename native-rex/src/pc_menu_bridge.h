@@ -23,6 +23,7 @@
 #include <vector>
 #include <mutex>
 #include <rex/input/input_system.h>
+#include "pc_monitors.h"
 
 namespace ben10_pc_menu {
 inline std::atomic<rex::Runtime*> runtime{nullptr};
@@ -34,6 +35,9 @@ inline bool hero_time_enabled=false;
 inline bool hero_button_armed=false;
 inline bool hero_input_observed=false;
 inline std::mutex video_settings_mutex;
+inline std::atomic<bool> background_controller_input{false};
+inline std::atomic<bool> mission_active{false};
+inline std::atomic<bool> pause_menu_active{false};
 inline void ReturnVoid(PPCContext& ctx,uint8_t* base);
 inline void SaveVideoKey(const std::filesystem::path& path,const std::string& key,const std::string& value);
 inline void ReturnNumber(PPCContext& ctx,uint8_t* base,float value) {
@@ -156,6 +160,8 @@ inline void ReturnVoid(PPCContext& ctx,uint8_t* base) {
 }
 template<int Level> void PresenceLevel(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
+  mission_active.store(Level != 0);
+  pause_menu_active.store(false);
   const char* levels[]={"menus","l_chin","l_mili","l_pari","l_romd","l_romn","l_rush","l_tokd","l_tokn"};
   ben10::albedo_textures::final_battle_active.store(Level == 7);
   if constexpr (Level == 7) {
@@ -163,6 +169,10 @@ template<int Level> void PresenceLevel(PPCContext& ctx,uint8_t* base) {
       ++ben10::albedo_textures::final_battle_trace_epoch;
   }
   ben10_presence::Publish(levels[Level]);
+}
+template<bool Paused> void PauseMenuCursor(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  pause_menu_active.store(Paused);
 }
 inline void QuitToLauncher(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("Cosmic PC menu: QUIT TO LAUNCHER selected");
@@ -251,12 +261,24 @@ inline int ResolutionIndex(const std::filesystem::path& path) {
   const auto value=ReadVideoSetting(path,"resolution","720p");
   return value=="4k"?3:value=="1440p"?2:value=="1080p"?1:0;
 }
-inline void ApplyPresentation(rex::ui::Window* active,int mode,int resolution) {
+inline void ApplyPresentation(rex::ui::Window* active,int mode,int resolution,
+                              const std::string* selected_monitor=nullptr) {
   using Configure=int(*)(void*,int,int,int,char*,size_t);
   auto configure=reinterpret_cast<Configure>(GetProcAddress(GetModuleHandleW(L"rexruntime.dll"),"Ben10ConfigurePresentation"));
   if(!configure)throw std::runtime_error("Matching SDK presentation extension is required");
   const int widths[]={1280,1920,2560,3840},heights[]={720,1080,1440,2160};
   const bool previous=active->IsFullscreen();active->SetFullscreen(false);
+  auto* host=runtime.load();
+  std::string monitor;
+  if(selected_monitor)monitor=*selected_monitor;
+  else if(host) {
+    std::ifstream file(host->user_data_root()/"monitor.txt");
+    std::getline(file,monitor);
+  }
+  if(!ben10::monitors::Move(static_cast<HWND>(active->GetNativeWindowHandle()),monitor)) {
+    active->SetFullscreen(previous);
+    throw std::runtime_error("Could not move the game to the selected monitor");
+  }
   char error[512]{};
   if(!configure(active->GetNativeWindowHandle(),mode,widths[resolution],heights[resolution],error,sizeof(error))) {
     active->SetFullscreen(previous);throw std::runtime_error(error);
@@ -358,9 +380,9 @@ inline std::atomic<unsigned> snapshot{0};
 inline std::atomic<unsigned> pending{0};
 inline unsigned tick_request=0; // Read and written only by the game script thread.
 inline bool tick_stock_changed=false;
-constexpr unsigned apply_flag=1u<<6;
-constexpr unsigned back=1u<<7;
-constexpr unsigned wipe=1u<<8;
+constexpr unsigned apply_flag=1u<<7;
+constexpr unsigned back=1u<<8;
+constexpr unsigned wipe=1u<<9;
 
 template<unsigned Row,bool On> void Capture(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
@@ -391,7 +413,7 @@ inline void Open(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   pending=0;
   snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
-      (ben10::albedo_hud::enabled.load()?32u:0u);
+      (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u);
   ben10_pc_video::controller_sample=0;
   ben10_pc_video::opening_guard=true;
   active=true;
@@ -415,8 +437,19 @@ inline void Finish(PPCContext& ctx,uint8_t* base) {
     if(bool(request&8u)!=all_aliens_enabled)ToggleAllAliens(ctx,base);
     if(bool(request&16u)!=hero_time_enabled)ToggleHeroTime(ctx,base);
     if(bool(request&32u)!=ben10::albedo_hud::enabled.load())ToggleAlbedoHud(ctx,base);
+    if(bool(request&64u)!=background_controller_input.load()) {
+      auto* host=runtime.load();
+      try {
+        if(host) {
+          std::lock_guard guard(video_settings_mutex);
+          SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","background_controller_input",
+              request&64u?"on":"off");
+          background_controller_input=bool(request&64u);
+        }
+      }catch(const std::exception& error){REXLOG_ERROR("Could not save background controller input: {}",error.what());}
+    }
     snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
-        (ben10::albedo_hud::enabled.load()?32u:0u);
+        (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u);
     pending=0;
   }
   if(request&(back|wipe)) {
@@ -487,6 +520,148 @@ inline void Finish(PPCContext& ctx,uint8_t* base) {
   }
   if(tick_request)pending=0;
   ReturnNumber(ctx,base,(tick_request&back)?1.0f:0.0f);
+}
+}
+namespace menu_mouse {
+// Called from the stock menu input routine (menu.ds 0x4226eb33) each frame.
+// Menu_AddOption centres row N at anchor-(N-1)*.075 in the overlay's y-up
+// space; AlignPauseMenu compacts the pause menu to .066 per row.
+inline std::atomic<uint64_t> last_poll{0};
+inline POINT last_cursor{}; // Guest script thread only.
+inline bool button_down=false;
+inline bool click=false;
+inline uint64_t wheel_last_poll=0;
+inline int pending_row=0; // Clicked row still waiting for the glow to arrive.
+inline uint64_t pending_since=0;
+inline bool Active() { return GetTickCount64()-last_poll.load(std::memory_order_relaxed)<600; }
+inline bool Argument(uint8_t* base,unsigned index,float& value) {
+  // Same argument block as sound_preview::Capture: receiver first, 8 bytes each.
+  uint32_t encoded;
+  std::memcpy(&encoded,base+0x826F8688,sizeof(encoded));
+  const auto arguments=_byteswap_ulong(encoded);
+  if(!arguments || arguments>UINT32_MAX-64)return false;
+  const uint32_t slot=arguments+index*8;
+  if(base[slot]!=0 || base[slot+1]!=2)return false;
+  std::memcpy(&encoded,base+slot+4,sizeof(encoded));
+  const auto bits=_byteswap_ulong(encoded);
+  std::memcpy(&value,&bits,sizeof(value));
+  return std::isfinite(value);
+}
+inline bool CursorInClient(rex::ui::Window* current,POINT& cursor,RECT& client) {
+  const auto handle=static_cast<HWND>(current->GetNativeWindowHandle());
+  return GetForegroundWindow()==handle && GetCursorPos(&cursor) && ScreenToClient(handle,&cursor) &&
+      GetClientRect(handle,&client) && PtInRect(&client,cursor) && client.right>0 && client.bottom>0;
+}
+inline bool PrimaryButtonDown() {
+  return (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON)?VK_RBUTTON:VK_LBUTTON)&0x8000)!=0;
+}
+inline int Row(uint8_t* base) {
+  // Longer than the glow slide, which pauses these polls while it locks input.
+  const bool resumed=GetTickCount64()-last_poll.load(std::memory_order_relaxed)>1000;
+  last_poll=GetTickCount64();
+  click=false;
+  const bool down=PrimaryButtonDown();
+  const bool pressed=down && !button_down;
+  button_down=down;
+  // Wheel screens keep a stock list menu updating underneath them; it is not
+  // on screen, so it must not follow the pointer.
+  if(GetTickCount64()-wheel_last_poll<250)return 0;
+  float count=0,selected=0,anchor=0;
+  auto* current=window.load();
+  if(resumed || GetTickCount64()-pending_since>1000)pending_row=0;
+  if(!current || ben10_pc_video::CapturesGameInput() || !Argument(base,1,count) ||
+      !Argument(base,2,selected) || !Argument(base,3,anchor))return 0;
+  // The stock glow locks input while it slides; the script polls again once it lands.
+  if(pending_row && pending_row==int(selected)) {
+    pending_row=0;
+    click=true;
+    return 0;
+  }
+  POINT cursor{};
+  RECT client{};
+  if(!CursorInClient(current,cursor,client))return 0;
+  // A menu that just opened keeps its stock selection until the mouse moves.
+  const bool moved=!resumed && (cursor.x!=last_cursor.x || cursor.y!=last_cursor.y);
+  last_cursor=cursor;
+  if(!moved && !pressed)return 0;
+  // Overlay x spans a centred 4:3 frame; y spans the full height, upward.
+  const float aspect=float(client.right)/float(client.bottom);
+  const float x=.5f+(float(cursor.x)/float(client.right)-.5f)*aspect*.75f;
+  const float y=1.0f-float(cursor.y)/float(client.bottom);
+  const float pitch=std::fabs(anchor-.546875f)<1e-4f?.066f:.075f;
+  const int row=int(std::lround((anchor-y)/pitch))+1;
+  if(pressed)REXLOG_INFO("Cosmic menu mouse: client {}x{} cursor {},{} overlay {:.3f},{:.3f} anchor {:.3f} row {}/{}",
+      client.right,client.bottom,cursor.x,cursor.y,x,y,anchor,row,int(count));
+  if(x<.15f || x>.85f)return 0;
+  if(row<1 || row>int(count))return 0;
+  if(row==int(selected)) {
+    click=pressed;
+    return 0;
+  }
+  if(pressed) {
+    pending_row=row;
+    pending_since=GetTickCount64();
+  }
+  return row;
+}
+inline void Poll(PPCContext& ctx,uint8_t* base) { ReturnNumber(ctx,base,float(Row(base))); }
+inline void Click(PPCContext& ctx,uint8_t* base) {
+  ReturnNumber(ctx,base,click?1.0f:0.0f);
+  click=false;
+}
+
+// Level Select wheel (misscr.ds 0x05cd2401): slots are placed by angle around
+// the wheel centre, 90 degrees = up, the same convention as the stick angle.
+inline POINT wheel_cursor{};
+inline bool wheel_button=false;
+inline bool wheel_click=false;
+inline uint64_t button_seen=0;
+// Radius 0: Level Select passes only its centre (radius .225).
+inline float WheelAngle(uint8_t* base,bool has_radius) {
+  const auto now=GetTickCount64();
+  const bool resumed=now-wheel_last_poll>1000;
+  wheel_last_poll=now;
+  last_poll=now;
+  const bool down=PrimaryButtonDown();
+  const bool pressed=down && !wheel_button;
+  wheel_button=down;
+  if(down)button_seen=now;
+  float center_x=0,center_y=0;
+  auto* current=window.load();
+  POINT cursor{};
+  RECT client{};
+  float radius=.225f;
+  if(!current || ben10_pc_video::CapturesGameInput() || !Argument(base,1,center_x) ||
+      !Argument(base,2,center_y) || (has_radius && !Argument(base,3,radius)) ||
+      !CursorInClient(current,cursor,client))return -1;
+  const bool moved=!resumed && (cursor.x!=wheel_cursor.x || cursor.y!=wheel_cursor.y);
+  wheel_cursor=cursor;
+  if(!moved && !pressed)return -1;
+  // Overlay x spans the full width here; measure in height units so the ring is round.
+  const float aspect=float(client.right)/float(client.bottom);
+  const float dx=(float(cursor.x)/float(client.right)-center_x)*aspect;
+  const float dy=1.0f-float(cursor.y)/float(client.bottom)-center_y;
+  const float distance=std::hypot(dx,dy);
+  float angle=std::atan2(dy,dx)*57.29578f;
+  if(angle<0)angle+=360;
+  if(pressed)REXLOG_INFO("Cosmic wheel mouse: client {}x{} cursor {},{} angle {:.1f} distance {:.3f}",
+      client.right,client.bottom,cursor.x,cursor.y,angle,distance);
+  if(distance<radius*.5f || distance>radius*1.8f)return -1;
+  wheel_click|=pressed;
+  return angle;
+}
+inline void WheelPoll(PPCContext& ctx,uint8_t* base) { ReturnNumber(ctx,base,WheelAngle(base,false)); }
+inline void RingPoll(PPCContext& ctx,uint8_t* base) { ReturnNumber(ctx,base,WheelAngle(base,true)); }
+// Left click doubles as a bound pad button; menus that act on it skip it
+// while the button is down (and briefly after a click shorter than a frame).
+inline void ButtonHeld(PPCContext& ctx,uint8_t* base) {
+  const auto now=GetTickCount64();
+  if(PrimaryButtonDown())button_seen=now;
+  ReturnNumber(ctx,base,now-button_seen<250?1.0f:0.0f);
+}
+inline void WheelClick(PPCContext& ctx,uint8_t* base) {
+  ReturnNumber(ctx,base,wheel_click?1.0f:0.0f);
+  wheel_click=false;
 }
 }
 namespace options_hub {
@@ -672,6 +847,8 @@ inline void OnFrame() {
       if(line=="hero_time=off")hero_time_enabled=false;
       if(line=="albedo_hud_preview=on")ben10::albedo_hud::enabled=true;
       if(line=="albedo_hud_preview=off")ben10::albedo_hud::enabled=false;
+      if(line=="background_controller_input=on")background_controller_input=true;
+      if(line=="background_controller_input=off")background_controller_input=false;
     }}
   std::error_code trace_marker_error;
   if (std::filesystem::is_regular_file(host->user_data_root()/"way-big-texture-trace.txt", trace_marker_error)) {
@@ -684,6 +861,14 @@ inline void OnFrame() {
     REXLOG_INFO("Way Big beam trace enabled");
   }
   add("cosmic_all_aliens_page",AllAliensPage);
+  add("cosmic_mouse_pause_menu",PauseMenuCursor<true>);
+  add("cosmic_mouse_resume_game",PauseMenuCursor<false>);
+  add("cosmic_mouse_menu_poll",menu_mouse::Poll,4);
+  add("cosmic_mouse_menu_click",menu_mouse::Click);
+  add("cosmic_mouse_wheel_poll",menu_mouse::WheelPoll,3);
+  add("cosmic_mouse_wheel_click",menu_mouse::WheelClick);
+  add("cosmic_mouse_ring_poll",menu_mouse::RingPoll,4);
+  add("cosmic_mouse_button_held",menu_mouse::ButtonHeld);
   if(std::getenv("BEN10_DISCORD_STATUS_FILE") || ben10::albedo_textures::final_battle_trace_enabled.load() ||
      ben10::albedo_textures::way_big_beam_trace_enabled.load()) {
     add("cosmic_presence_menus",PresenceLevel<0>);

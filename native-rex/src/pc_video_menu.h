@@ -15,7 +15,8 @@ inline HANDLE closed_event=nullptr;
 inline thread_local bool polling_options=false;
 inline std::atomic<uint32_t> controller_sample{0};
 inline constexpr uint32_t sample_valid=0x10000;
-inline bool CapturesGameInput(){return visible.load() || release_guard.load();}
+inline std::atomic<bool> music_overlay{false};  // Quick Music Overlay (music_overlay.h).
+inline bool CapturesGameInput(){return visible.load() || release_guard.load() || music_overlay.load();}
 class Dialog final:public rex::ui::ImGuiDialog {
  public:
   Dialog(rex::ui::ImGuiDrawer* drawer,rex::input::InputSystem* input,const std::filesystem::path& user,ImFont* font=nullptr)

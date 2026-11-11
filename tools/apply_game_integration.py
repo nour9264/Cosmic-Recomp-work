@@ -467,4 +467,99 @@ if 'SwapWayBigBeamTint' not in body:
                  body.replace(anchor, hook + anchor) + text[end:])
     changes += 1
 
+# Input poll: direct mouse look. sub_821A8E70 turns a raw stick into angle,
+# magnitude and clamped x/y; when the mouse moved, run it again for the right
+# stick on raw stick + mouse, without the dead zone, so every output agrees.
+name = 'sub_821A8FC8'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index('DEFINE_REX_FUNC(' + name + ') {')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+# An earlier local build added the mouse after this call, to the wrong outputs.
+previous = 'Ben10MouseCamera(ctx.f28.f64, &ctx.f4.f64, &ctx.f5.f64);\n\t'
+original_body = body
+body = body.replace(previous, '')
+mouse_call = ('\n\tif (double cosmic_x = 0, cosmic_y = 0; Ben10MouseCameraStick(&cosmic_x, &cosmic_y)) {\n'
+              '\t\tctx.r3.u64 = ctx.r28.u64;\n'
+              '\t\tctx.f1.f64 = double(float(double(int16_t(REX_LOAD_U16(ctx.r1.u32 + 172))) + cosmic_x * 32767.0));\n'
+              '\t\tctx.f2.f64 = double(float((double(int16_t(REX_LOAD_U16(ctx.r1.u32 + 174))) + cosmic_y * 32767.0) * ctx.f28.f64));\n'
+              '\t\tctx.f3.f64 = 0.0;\n'
+              '\t\tctx.r7.s64 = ctx.r1.s64 + 152;\n'
+              '\t\tctx.r8.s64 = ctx.r1.s64 + 156;\n'
+              '\t\tctx.r9.s64 = ctx.r1.s64 + 128;\n'
+              '\t\tctx.r10.s64 = ctx.r1.s64 + 124;\n'
+              '\t\tctx.lr = 0x821A9124;\n'
+              '\t\tsub_821A8E70(ctx, base);\n')
+# The stick function caps magnitude and x/y at full deflection. A fast mouse
+# asks for more; restore the uncapped values so the camera can turn faster.
+uncapped = ('\t\tconst double cosmic_nx = double(int16_t(REX_LOAD_U16(ctx.r1.u32 + 172))) / 32767.0 + cosmic_x;\n'
+            '\t\tconst double cosmic_ny = (double(int16_t(REX_LOAD_U16(ctx.r1.u32 + 174))) / 32767.0 + cosmic_y) * ctx.f28.f64;\n'
+            '\t\tconst double cosmic_magnitude = sqrt(cosmic_nx * cosmic_nx + cosmic_ny * cosmic_ny);\n'
+            '\t\tif (cosmic_magnitude > 1.0) {\n'
+            '\t\t\ttemp.f32 = float(cosmic_magnitude);\n\t\t\tREX_STORE_U32(ctx.r1.u32 + 128, temp.u32);\n'
+            '\t\t\ttemp.f32 = float(cosmic_nx);\n\t\t\tREX_STORE_U32(ctx.r1.u32 + 152, temp.u32);\n'
+            '\t\t\ttemp.f32 = float(cosmic_ny);\n\t\t\tREX_STORE_U32(ctx.r1.u32 + 156, temp.u32);\n'
+            '\t\t}\n')
+capped_hook = mouse_call + '\t}'
+hook = mouse_call + uncapped + '\t}'
+if hook not in body:
+    anchor = 'ctx.lr = 0x821A9124;\n\tsub_821A8E70(ctx, base);'
+    if capped_hook in body:
+        body = body.replace(capped_hook, hook)
+    elif body.count(anchor) != 1:
+        raise RuntimeError('Unexpected right stick processing call')
+    else:
+        body = body.replace(anchor, anchor + hook)
+if body != original_body:
+    p.write_text(text[:start] + body + text[end:])
+    changes += 1
+
+# Ultrawide was investigated and dropped: remove its hooks from generated code
+# integrated by earlier local builds.
+for name, hooks in {
+    'sub_824E1058': ['\tctx.f0.f64 = Ben10DisplayAspect(ctx.f0.f64);\n'],
+    'sub_820E09B8': ['\tctx.f1.f64 = Ben10DisplayAspect(ctx.f1.f64);\n',
+                     '\tctx.f31.f64 = Ben10DisplayAspect(ctx.f31.f64);\n'],
+}.items():
+    p = locate_functions(args.generated, [name])[name]
+    text = p.read_text()
+    cleaned = text
+    for hook in hooks:
+        cleaned = cleaned.replace(hook, '')
+    if cleaned != text:
+        p.write_text(cleaned)
+        changes += 1
+
+# Field of View: sub_82166B08 uploads engine matrices as vertex shader
+# constants through sub_8247AF40 (source r5, r6 vectors). Rescale the
+# gameplay projection in the source for the upload, then restore it.
+name = 'sub_82166B08'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index('DEFINE_REX_FUNC(' + name + ') {')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+original_body = body
+for resume in ('82166CDC', '82166D94'):
+    call = 'ctx.lr = 0x' + resume + ';\n\tsub_8247AF40(ctx, base);'
+    # An earlier local build rescaled the driver copy after the upload.
+    previous = ('{\n\tconst uint32_t cosmic_constants = ctx.r3.u32 + ((ctx.r4.u32 + 120) << 4);\n'
+                '\tconst uint32_t cosmic_vectors = ctx.r6.u32;\n\t' + call +
+                '\n\tBen10ScaleProjection(base, cosmic_constants, cosmic_vectors);\n\t}')
+    hooked = '{\n\tBen10FovBegin(base, ctx.r5.u32, ctx.r6.u32);\n\t' + call + '\n\tBen10FovEnd();\n\t}'
+    body = body.replace(previous, call)
+    if hooked in body:
+        continue
+    if body.count(call) != 1:
+        raise RuntimeError('Unexpected shader constant upload')
+    body = body.replace(call, hooked)
+if body != original_body:
+    p.write_text(text[:start] + body + text[end:])
+    changes += 1
+
 print('PC integration applied to',changes,'locally generated functions.')

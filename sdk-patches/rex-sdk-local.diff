@@ -2861,7 +2861,7 @@ index 306118e..85b59c9 100644
        case GuestOutputPaintEffect::kBilinearDither:
          guest_output_paint_pipeline_desc.PS.pShaderBytecode =
 diff --git a/src/ui/imgui_drawer.cpp b/src/ui/imgui_drawer.cpp
-index f270f3c..40b29b2 100644
+index f270f3c..8586428 100644
 --- a/src/ui/imgui_drawer.cpp
 +++ b/src/ui/imgui_drawer.cpp
 @@ -436,7 +436,14 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
@@ -2880,6 +2880,26 @@ index f270f3c..40b29b2 100644
      // Repaint (and handle input) continuously if still active. In detached mode
      // there is no presenter; the app drives repaint via its own present loop.
      if (presenter_) {
+@@ -518,6 +525,9 @@ void ImGuiDrawer::OnMouseDown(MouseEvent& e) {
+       button = 1;
+       break;
+     }
++      case rex::ui::MouseEvent::Button::kMiddle: button = 2; break;
++      case rex::ui::MouseEvent::Button::kX1: button = 3; break;
++      case rex::ui::MouseEvent::Button::kX2: button = 4; break;
+     default: {
+       // Ignored.
+       break;
+@@ -550,6 +560,9 @@ void ImGuiDrawer::OnMouseUp(MouseEvent& e) {
+       button = 1;
+       break;
+     }
++      case rex::ui::MouseEvent::Button::kMiddle: button = 2; break;
++      case rex::ui::MouseEvent::Button::kX1: button = 3; break;
++      case rex::ui::MouseEvent::Button::kX2: button = 4; break;
+     default: {
+       // Ignored.
+       break;
 diff --git a/src/ui/overlay/achievement_toast.cpp b/src/ui/overlay/achievement_toast.cpp
 index 53b8c0b..6bb12c6 100644
 --- a/src/ui/overlay/achievement_toast.cpp
@@ -4575,3 +4595,150 @@ index 0000000..fcf606e
 +      0,   0,   0,   0,   0,   0,
 +      2,   0,   0,   0
 +};
+diff --git a/include/rex/input/mnk/mnk_input_driver.h b/include/rex/input/mnk/mnk_input_driver.h
+index c8751b7..fdaa490 100644
+--- a/include/rex/input/mnk/mnk_input_driver.h
++++ b/include/rex/input/mnk/mnk_input_driver.h
+@@ -24,6 +24,11 @@ namespace rex::input::mnk {
+ 
+ void SetMouseLookActive(bool active);
+ bool IsMouseLookActive();
++// Direct mouse look: mouse movement is not mapped onto the right stick. The
++// title reads the accumulated movement (pixels, stick orientation: right and
++// up positive, mnk_invert_* applied) and turns its camera by that angle.
++void SetDirectMouseLook(bool direct);
++bool ConsumeDirectMouseLook(float& dx, float& dy);
+ 
+ class MnkInputDriver final : public InputDriver,
+                              public rex::ui::WindowInputListener,
+diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
+index 3f9422d..d342869 100644
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -29,6 +29,9 @@ REXCVAR_DEFINE_BOOL(mnk_mouse, false, "Input",
+                     "from the keybind_rstick_* keys only");
+ REXCVAR_DEFINE_DOUBLE(mnk_sensitivity, 1.0, "Input", "Mouse sensitivity for right stick")
+     .range(0.01, 10.0);
++REXCVAR_DEFINE_BOOL(mnk_invert_x, false, "Input", "Invert mouse camera X");
++REXCVAR_DEFINE_BOOL(mnk_invert_y, false, "Input", "Invert mouse camera Y");
++REXCVAR_DEFINE_BOOL(mnk_custom_modifiers, false, "Input", "Allow modifier keys with custom movement bindings");
+ 
+ REXCVAR_DEFINE_STRING(keybind_a, "Semicolon,Space", "Input/Keybinds/Controller", "A button");
+ REXCVAR_DEFINE_STRING(keybind_b, "Quote,Backspace", "Input/Keybinds/Controller", "B button");
+@@ -124,7 +127,8 @@ std::string_view TrimSpaces(std::string_view s) {
+ 
+ bool TokenPressed(const bool (&key_down)[256], std::string_view token, uint8_t live_mods) {
+   uint8_t want = TakeModifiers(token);
+-  if (want != live_mods) {
++  const bool custom = REXCVAR_GET(mnk_custom_modifiers);
++  if ((!custom && want != live_mods) || (custom && (want & live_mods) != want)) {
+     return false;
+   }
+   rex::ui::VirtualKey vk = rex::ui::ParseVirtualKey(token);
+@@ -136,6 +140,10 @@ bool TokenPressed(const bool (&key_down)[256], std::string_view token, uint8_t l
+ }
+ 
+ std::atomic<bool> mouse_look_active{true};
++std::atomic<bool> direct_mouse_look{false};
++std::mutex direct_mouse_mutex;
++float direct_mouse_dx = 0.0f;
++float direct_mouse_dy = 0.0f;
+ 
+ }  // namespace
+ 
+@@ -147,6 +155,19 @@ bool IsMouseLookActive() {
+   return mouse_look_active.load(std::memory_order_relaxed);
+ }
+ 
++void SetDirectMouseLook(bool direct) {
++  direct_mouse_look.store(direct, std::memory_order_relaxed);
++}
++
++bool ConsumeDirectMouseLook(float& dx, float& dy) {
++  std::lock_guard lock(direct_mouse_mutex);
++  dx = direct_mouse_dx;
++  dy = direct_mouse_dy;
++  direct_mouse_dx = 0.0f;
++  direct_mouse_dy = 0.0f;
++  return dx != 0.0f || dy != 0.0f;
++}
++
+ using rex::ui::VirtualKey;
+ 
+ MnkInputDriver::MnkInputDriver(rex::ui::Window* window, size_t window_z_order)
+@@ -261,10 +282,11 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+ 
+   // Mouse look is opt in. Without this gate, keyboard input alone would hide
+   // and lock the cursor, breaking the ImGui overlays.
++  const bool active = is_active();
+   QueueMouseCaptureUpdate(IsEnabled() && REXCVAR_GET(mnk_mouse) && IsMouseLookActive() &&
+-                          has_focus_ && is_active());
++                          has_focus_ && active);
+ 
+-  if (!is_active() || !has_focus_) {
++  if (!active || !has_focus_) {
+     if (out_state) {
+       std::memset(out_state, 0, sizeof(*out_state));
+       out_state->packet_number = packet_number_;
+@@ -331,11 +353,19 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_rstick_down)))
+     ry -= INT16_MAX;
+ 
+-  if (REXCVAR_GET(mnk_mouse) && IsMouseLookActive()) {
++  if (REXCVAR_GET(mnk_mouse) && IsMouseLookActive() &&
++      direct_mouse_look.load(std::memory_order_relaxed)) {
++    // The title applies the movement as an angle; keep the stick for pads/keys.
++    std::lock_guard direct(direct_mouse_mutex);
++    direct_mouse_dx += mouse_dx_ * (REXCVAR_GET(mnk_invert_x) ? -1.0f : 1.0f);
++    direct_mouse_dy -= mouse_dy_ * (REXCVAR_GET(mnk_invert_y) ? -1.0f : 1.0f);
++  } else if (REXCVAR_GET(mnk_mouse) && IsMouseLookActive()) {
+     double sensitivity = REXCVAR_GET(mnk_sensitivity);
+     constexpr double kBaseScale = 200.0;
+-    rx += static_cast<int32_t>(double(mouse_dx_) * sensitivity * kBaseScale);
+-    ry += static_cast<int32_t>(double(-mouse_dy_) * sensitivity * kBaseScale);
++    rx += static_cast<int32_t>(double(mouse_dx_) * sensitivity * kBaseScale *
++        (REXCVAR_GET(mnk_invert_x) ? -1.0 : 1.0));
++    ry += static_cast<int32_t>(double(-mouse_dy_) * sensitivity * kBaseScale *
++        (REXCVAR_GET(mnk_invert_y) ? -1.0 : 1.0));
+   }
+   // Drained unconditionally: deltas keep accumulating in OnMouseMove while the
+   // mouse is off, and toggling it on would otherwise dump the whole backlog
+@@ -510,6 +540,12 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
+     case rex::ui::MouseEvent::Button::kMiddle:
+       SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), true);
+       break;
++    case rex::ui::MouseEvent::Button::kX1:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton1), true);
++      break;
++    case rex::ui::MouseEvent::Button::kX2:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton2), true);
++      break;
+     default:
+       break;
+   }
+@@ -529,6 +565,12 @@ void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
+     case rex::ui::MouseEvent::Button::kMiddle:
+       SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), false);
+       break;
++    case rex::ui::MouseEvent::Button::kX1:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton1), false);
++      break;
++    case rex::ui::MouseEvent::Button::kX2:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton2), false);
++      break;
+     default:
+       break;
+   }
+diff --git a/src/ui/keybinds.cpp b/src/ui/keybinds.cpp
+index 9822f3b..abeaf2a 100644
+--- a/src/ui/keybinds.cpp
++++ b/src/ui/keybinds.cpp
+@@ -141,6 +141,8 @@ static const std::unordered_map<std::string, VirtualKey> kKeyNames = {
+     {"LMB", VirtualKey::kLButton},
+     {"RMB", VirtualKey::kRButton},
+     {"MMB", VirtualKey::kMButton},
++    {"Mouse4", VirtualKey::kXButton1},
++    {"Mouse5", VirtualKey::kXButton2},
+ };
+ 
+ VirtualKey ParseVirtualKey(std::string_view name) {

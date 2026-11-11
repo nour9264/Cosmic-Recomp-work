@@ -3,7 +3,52 @@ import argparse
 from pathlib import Path
 import struct
 
-from extract_discord_level_images import table, tiled_offset
+from extract_discord_level_images import table, tiled_offset, untile
+
+
+def extract_menu_cursor(originals):
+    """Decode the original 128px Omnitrix pointer without a Pillow dependency."""
+    return decode_global_icon(originals, 0x009e68f6, 'Omnitrix cursor')
+
+
+def extract_options_badge(originals):
+    """The original Omnitrix dial for the Options pages, then its red Albedo copy."""
+    green = decode_global_icon(originals, 0xc8c35802, 'Omnitrix badge')
+    red = bytearray(green)
+    red[0::4], red[1::4] = green[1::4], bytes(value // 3 for value in green[0::4])
+    return bytes(green) + bytes(red)
+
+
+def decode_global_icon(originals, texture, name):
+    """Decode a 128px DXT5 texture from global.xbx to RGBA."""
+    record = table((originals / 'global/global.xbx').read_bytes()[256:])[texture]
+    if len(record) != 128 + 32768 or struct.unpack_from('>IHHH', record) != (0xa0848000, 0x102, 128, 128):
+        raise ValueError('Unsupported ' + name + ' texture')
+    blocks = bytearray(untile(record[128:], 32, 32, 4))
+    blocks[0::2], blocks[1::2] = blocks[1::2], blocks[0::2]
+    pixels = bytearray(128 * 128 * 4)
+    for index in range(32 * 32):
+        block = blocks[index * 16:index * 16 + 16]
+        a, b = block[:2]
+        alpha = [a, b]
+        if a > b:
+            alpha += [((7-i)*a + i*b)//7 for i in range(1, 7)]
+        else:
+            alpha += [((5-i)*a + i*b)//5 for i in range(1, 5)] + [0, 255]
+        alpha_indices = int.from_bytes(block[2:8], 'little')
+        colors = []
+        for value in struct.unpack_from('<2H', block, 8):
+            r, g, blue = value >> 11, (value >> 5) & 63, value & 31
+            colors.append(((r << 3) | (r >> 2), (g << 2) | (g >> 4), (blue << 3) | (blue >> 2)))
+        first, second = colors
+        colors += [tuple(((3-i)*x + i*y)//3 for x,y in zip(first,second)) for i in (1, 2)]
+        color_indices = int.from_bytes(block[12:16], 'little')
+        for i in range(16):
+            x, y = (index % 32)*4 + i%4, (index // 32)*4 + i//4
+            offset = (y * 128 + x) * 4
+            pixels[offset:offset+4] = bytes((*colors[(color_indices >> (i*2)) & 3],
+                                            alpha[(alpha_indices >> (i*3)) & 7]))
+    return pixels
 
 
 def fingerprint(data):
@@ -228,5 +273,11 @@ if __name__ == '__main__':
     parser.add_argument('originals', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--four-arms', type=Path)
+    parser.add_argument('--menu-cursor', type=Path)
+    parser.add_argument('--options-badge', type=Path)
     args = parser.parse_args()
     prepare(args.originals, args.output, args.four_arms)
+    if args.menu_cursor:
+        args.menu_cursor.write_bytes(extract_menu_cursor(args.originals))
+    if args.options_badge:
+        args.options_badge.write_bytes(extract_options_badge(args.originals))

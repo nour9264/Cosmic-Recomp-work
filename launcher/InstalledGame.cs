@@ -126,6 +126,8 @@ namespace CosmicRecompi {
             string script = Path.Combine(tools, "prepare_albedo_textures.py");
             if (!File.Exists(script)) return;
             string target = Path.Combine(folder, "user", "albedo-textures.bin");
+            string cursor = Path.Combine(folder, "user", "omnitrix-cursor.rgba");
+            string badge = Path.Combine(folder, "user", "options-ultimatrix.rgba");
             string fourArms = Path.Combine(folder, "four-arms", "g_fa.xbx");
             bool hasFourArms = File.Exists(fourArms);
             if (File.Exists(target)) {
@@ -135,13 +137,16 @@ namespace CosmicRecompi {
                     if (reader.BaseStream.Length >= 16 &&
                         reader.ReadUInt64() == 0x0000000444424c41UL &&
                         reader.ReadUInt32() == (hasFourArms ? 31u : 30u) &&
-                        reader.ReadUInt32() == 0x14934253u) return;
+                        reader.ReadUInt32() == 0x14934253u &&
+                        File.Exists(cursor) && new FileInfo(cursor).Length == 128 * 128 * 4 &&
+                        File.Exists(badge) && new FileInfo(badge).Length == 2 * 128 * 128 * 4) return;
                 }
             }
             string temporary = target + ".new";
             var start = new ProcessStartInfo(Path.Combine(tools, "python.exe")) {
                 Arguments = "-B \"" + script + "\" \"" + Path.Combine(folder, "game") + "\" \"" +
-                    temporary + "\"" + (hasFourArms ? " --four-arms \"" + fourArms + "\"" : ""),
+                    temporary + "\" --menu-cursor \"" + cursor + ".new\" --options-badge \"" + badge + ".new\"" +
+                    (hasFourArms ? " --four-arms \"" + fourArms + "\"" : ""),
                 WorkingDirectory = tools,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -154,6 +159,10 @@ namespace CosmicRecompi {
             }
             if (File.Exists(target)) File.Replace(temporary, target, null);
             else File.Move(temporary, target);
+            if (File.Exists(cursor)) File.Replace(cursor + ".new", cursor, null);
+            else File.Move(cursor + ".new", cursor);
+            if (File.Exists(badge)) File.Replace(badge + ".new", badge, null);
+            else File.Move(badge + ".new", badge);
         }
         internal static bool SetWayBigModels(byte[] characters, bool albedo) {
             const int player = 0x110bc, boss = 0x10ed8;
@@ -284,6 +293,9 @@ namespace CosmicRecompi {
             foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
                 if (((string)variable.Key).StartsWith("BEN10_", StringComparison.OrdinalIgnoreCase)) start.EnvironmentVariables.Remove((string)variable.Key);
             start.EnvironmentVariables["BEN10_PORTABLE_ROOT"] = folder;
+            // SDL reads its environment during initialization. Delivery to the
+            // game is controlled by the saved background controller option.
+            start.EnvironmentVariables["SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1";
             string introSetting = Path.Combine(folder, "user", "skip-intro.txt");
             bool skipIntro = File.Exists(introSetting) && File.ReadAllText(introSetting).Trim() == "on";
             if (skipIntro) start.EnvironmentVariables["BEN10_SKIP_INTRO"] = "1";

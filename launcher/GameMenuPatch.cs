@@ -632,10 +632,30 @@ namespace CosmicRecompi {
             byte[] original=backedUp?File.ReadAllBytes(backup):current;
             if(Hash(original)!=originalHash)throw new InvalidDataException("Unsupported original menu script.");
             byte[] aligned=AllAliensPatch.AlignPauseHighlight(original);
-            byte[] updated=AllAliensPatch.GuardCheatBackdropCleanup(aligned);
+            byte[] guarded=AllAliensPatch.GuardCheatBackdropCleanup(aligned);
+            byte[] updated=AllAliensPatch.MenuMouseHooks(guarded);
             string currentHash=Hash(current);
             if(currentHash==Hash(updated))return;
-            if(currentHash!=originalHash && currentHash!=Hash(aligned))throw new IOException("Another version modified menu.ds.");
+            if(currentHash!=originalHash && currentHash!=Hash(aligned) && currentHash!=Hash(guarded) &&
+                !AllAliensPatch.IsMenuMouseVariant(current,guarded))
+                throw new IOException("Another version modified menu.ds.");
+            if(!backedUp)File.WriteAllBytes(backup,original);
+            string temporary=path+".cosmic-new";
+            File.WriteAllBytes(temporary,updated);
+            File.Replace(temporary,path,null);
+        }
+
+        static void EnsureLevelSelectMouse(string scripts) {
+            const string originalHash="9d22a0ab86701324881bae5b2feddcb5b6da22f0b1e8f7f8082a53157434ac93";
+            string path=Path.Combine(scripts,"misscr.ds"),backup=path+".cosmic-original";
+            byte[] current=File.ReadAllBytes(path);
+            bool backedUp=File.Exists(backup);
+            byte[] original=backedUp?File.ReadAllBytes(backup):current;
+            if(Hash(original)!=originalHash)throw new InvalidDataException("Unsupported original mission script.");
+            byte[] updated=AllAliensPatch.LevelSelectMouseHooks(original);
+            string currentHash=Hash(current);
+            if(currentHash==Hash(updated))return;
+            if(currentHash!=originalHash)throw new IOException("Another version modified misscr.ds.");
             if(!backedUp)File.WriteAllBytes(backup,original);
             string temporary=path+".cosmic-new";
             File.WriteAllBytes(temporary,updated);
@@ -677,13 +697,13 @@ namespace CosmicRecompi {
             byte[] cheatPreview=AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedPreview);
             byte[] cheatStock=AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedStock);
 #if COSMIC_HERO_TIME && COSMIC_NATIVE_SETTINGS
-            updated=cheatPreview;
+            updated=AllAliensPatch.MenuCursorHooks(cheatPreview);
 #else
             updated=cheatStock;
 #endif
             byte[] current=File.ReadAllBytes(frontend),currentEnglish=File.ReadAllBytes(english);
             string expected=Hash(updated),expectedEnglish=Hash(updatedEnglish),currentHash=Hash(current);
-            if(currentHash==expected && Hash(currentEnglish)==expectedEnglish) { EnsurePauseHighlight(scripts);return; }
+            if(currentHash==expected && Hash(currentEnglish)==expectedEnglish) { EnsurePauseHighlight(scripts);EnsureLevelSelectMouse(scripts);return; }
             if((currentHash!=expected && currentHash!=Hash(cheatPreview) && currentHash!=Hash(cheatStock) &&
                 currentHash!=Hash(AllAliensPatch.LegacyCinematicVoiceVolume(cheatPreview)) &&
                 currentHash!=Hash(AllAliensPatch.LegacyCinematicVoiceVolume(cheatStock)) && currentHash!=Hash(preview) && currentHash!=Hash(alignedPreview) && currentHash!=Hash(alignedStock) && currentHash!=Hash(previousAlignedPreview) && currentHash!=Hash(previousAlignedStock) && currentHash!=Hash(unsyncedPreview) && currentHash!=Hash(unsyncedStock) && currentHash!=Hash(videoPreview) && currentHash!=Hash(previousSettingsPreview) && currentHash!=Hash(gameplayPreview) && currentHash!=Hash(soundPreview) && currentHash!=Hash(previousSoundPreview) && currentHash!=Hash(previousStyledPreview) && currentHash!=Hash(crashedStyledPreview) && currentHash!=Hash(numericVibrationPreview) && currentHash!=Hash(oldVibrationPreview) && currentHash!=Hash(Frontend(original)) && currentHash!=FrontendHash &&
@@ -705,7 +725,7 @@ namespace CosmicRecompi {
                 currentHash!=Hash(Frontend(original,false,false)) && currentHash!=Hash(Frontend(original,true,false))) ||
                (Hash(currentEnglish)!=EnglishHash && Hash(currentEnglish)!=Hash(LegacyEnglish(originalEnglish)) && !IsAuthoredTranslation(originalEnglish,currentEnglish)))
                 throw new IOException("The game's menu files were modified by another version. Import your ISO into a new folder; your saves are preserved separately.");
-            EnsurePauseHighlight(scripts);
+            EnsurePauseHighlight(scripts);EnsureLevelSelectMouse(scripts);
             if(!File.Exists(frontendBackup))File.WriteAllBytes(frontendBackup,original);
             if(!File.Exists(englishBackup))File.WriteAllBytes(englishBackup,originalEnglish);
             string first=frontend+".cosmic-new",second=english+".cosmic-new";

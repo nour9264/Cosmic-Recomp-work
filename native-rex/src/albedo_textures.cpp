@@ -1,6 +1,7 @@
 #include "albedo_textures.h"
 
 #include "albedo_hud.h"
+#include "keyboard_mouse_runtime.h"
 #include "frame_metrics.h"
 #include <rex/system/xmemory.h>
 #include <rex/logging.h>
@@ -200,13 +201,83 @@ struct Sprite {
   uint32_t virtual_address = 0;
   uint32_t physical_address = 0;
 };
-std::array<Sprite, 16> sprites;
+// 0-15: default_prompt_sprites.bin (PlayStation). 16+: one per bindable key
+// (keyboard_prompt_sprites.bin). Then 16 Xbox sprites (xbox_prompt_sprites.bin).
+constexpr int kKeySpriteBase = 16;
+constexpr int kMaxKeySprites = 128;
+constexpr int kXboxSpriteBase = kKeySpriteBase + kMaxKeySprites;
+std::array<Sprite, kXboxSpriteBase + 16> sprites;
 int WorldPromptFace(rex::memory::Memory& mem, uint32_t base, uint32_t blocks);
+
+struct KeySprites {
+  std::vector<std::string> tokens;
+  std::vector<uint8_t> pages;
+};
+// tools/build_keyboard_prompt_sprites.cs: "KMIC\1", count, then 16-byte token + page each.
+const KeySprites& KeySpritePages() {
+  static const auto keys = [] {
+    KeySprites result;
+    const auto module = GetModuleHandleW(nullptr);
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(103), MAKEINTRESOURCEW(10));
+    const auto size = resource ? SizeofResource(module, resource) : 0;
+    const auto data = resource ? LoadResource(module, resource) : nullptr;
+    const auto* bytes = data ? static_cast<const uint8_t*>(LockResource(data)) : nullptr;
+    constexpr std::string_view magic("KMIC\1\0\0\0", 8);
+    if (!bytes || size < 12 || std::memcmp(bytes, magic.data(), magic.size()) != 0) return result;
+    uint32_t count = 0;
+    std::memcpy(&count, bytes + 8, sizeof(count));
+    if (count > kMaxKeySprites || size != 12 + count * (16 + kSpritePage)) return result;
+    for (uint32_t i = 0; i < count; ++i) {
+      const auto* entry = bytes + 12 + i * (16 + kSpritePage);
+      result.tokens.emplace_back(reinterpret_cast<const char*>(entry),
+                                 strnlen(reinterpret_cast<const char*>(entry), 16));
+      result.pages.insert(result.pages.end(), entry + 16, entry + 16 + kSpritePage);
+    }
+    REXLOG_INFO("Button Icons: {} keyboard/mouse prompt sprites available", count);
+    return result;
+  }();
+  return keys;
+}
+
+// Sprite for whatever key the action is bound to now (first binding of the
+// live cvar, so custom and default profiles both work). Modifier combos have
+// no single keycap and keep the text fallback.
+int KeyPromptSprite(const char* action) {
+  const auto binding = ben10::controls::FirstBinding(action);
+  if (binding.empty() || binding.find('+') != std::string::npos) return -1;
+  const auto& keys = KeySpritePages();
+  for (size_t i = 0; i < keys.tokens.size(); ++i)
+    if (keys.tokens[i] == binding) return kKeySpriteBase + int(i);
+  return -1;
+}
+
+// Prompt glyph codes: 1-4 = A, X, Y, B; then shoulder/trigger/stick glyphs.
+const char* PromptAction(uint8_t code) {
+  switch (code) {
+    case 1: return "keybind_a";
+    case 2: return "keybind_x";
+    case 3: return "keybind_y";
+    case 4: return "keybind_b";
+    case 0x19: return "keybind_rstick_press";
+    case 0x1a: return "keybind_left_shoulder";
+    case 0x1b: return "keybind_left_trigger";
+    case 0x1d: return "keybind_right_trigger";
+  }
+  return nullptr;
+}
+
+const std::vector<uint8_t>& SpritePixels();
+const std::vector<uint8_t>& XboxSpritePixels();
+const uint8_t* SpritePage(int index) {
+  if (index >= kXboxSpriteBase) return XboxSpritePixels().data() + (index - kXboxSpriteBase) * kSpritePage;
+  if (index < kKeySpriteBase) return SpritePixels().data() + index * kSpritePage;
+  return KeySpritePages().pages.data() + (index - kKeySpriteBase) * kSpritePage;
+}
 
 const std::vector<uint8_t>& SpritePixels() {
   static const auto pixels = [] {
     constexpr std::string_view magic("PSIC\3\0\0\0", 8);
-    constexpr size_t size = kSpritePage * sprites.size();
+    constexpr size_t size = kSpritePage * kKeySpriteBase;  // The 16 default sprites only.
     if (std::ifstream file(prompt_sprite_path, std::ios::binary); file) {
       char header[magic.size()]{};
       std::vector<uint8_t> data(size);
@@ -226,6 +297,28 @@ const std::vector<uint8_t>& SpritePixels() {
   }();
   return pixels;
 }
+
+// Modern Xbox prompt sprites, the same layout as the PlayStation set.
+const std::vector<uint8_t>& XboxSpritePixels() {
+  static const auto pixels = [] {
+    constexpr std::string_view magic("PSIC\3\0\0\0", 8);
+    constexpr size_t size = kSpritePage * kKeySpriteBase;
+    const auto module = GetModuleHandleW(nullptr);
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(105), MAKEINTRESOURCEW(10));
+    if (!resource || SizeofResource(module, resource) != magic.size() + size) return std::vector<uint8_t>{};
+    const auto data = LoadResource(module, resource);
+    const auto* bytes = data ? static_cast<const uint8_t*>(LockResource(data)) : nullptr;
+    if (!bytes || std::memcmp(bytes, magic.data(), magic.size()) != 0) return std::vector<uint8_t>{};
+    return std::vector<uint8_t>(bytes + magic.size(), bytes + magic.size() + size);
+  }();
+  return pixels;
+}
+}
+
+static ButtonIcons ConnectedControllerIcons();
+static ButtonIcons ResolvedButtonIcons() {
+  const auto mode = button_icons.load(std::memory_order_relaxed);
+  return mode == ButtonIcons::Auto ? ConnectedControllerIcons() : mode;
 }
 
 bool HasPromptSprites() {
@@ -236,10 +329,22 @@ PromptSpriteBind::PromptSpriteBind(uint8_t code)
     : previous_(prompt_sprite), previous_bound_(prompt_sprite_bound) {
   prompt_sprite = -1;
   prompt_sprite_bound = false;
-  const auto mode = button_icons.load(std::memory_order_relaxed);
+  const auto mode = ResolvedButtonIcons();
+  if (mode == ButtonIcons::Xbox) {
+    if (XboxSpritePixels().empty()) return;
+    if (code >= 1 && code <= 4) { prompt_sprite = kXboxSpriteBase + code - 1; return; }
+    switch (code) {
+      case 0x19: prompt_sprite = kXboxSpriteBase + 10; break;  // Right stick click.
+      case 0x1a: prompt_sprite = kXboxSpriteBase + 4; break;   // Left bumper.
+      case 0x1b: prompt_sprite = kXboxSpriteBase + 6; break;   // Left trigger.
+      case 0x1d: prompt_sprite = kXboxSpriteBase + 8; break;   // Right trigger.
+    }
+    return;
+  }
   if ((mode != ButtonIcons::PlayStation && mode != ButtonIcons::Keyboard) || !HasPromptSprites())
     return;
   const bool keyboard = mode == ButtonIcons::Keyboard;
+  if (keyboard && (prompt_sprite = KeyPromptSprite(PromptAction(code))) >= 0) return;
   if (code >= 1 && code <= 4) {
     constexpr int keyboard_faces[] = {12, 14, 15, 13};
     prompt_sprite = keyboard ? keyboard_faces[code - 1] : code - 1;
@@ -269,12 +374,16 @@ bool BindPromptSprite(uint32_t& flags, uint32_t& size, uint32_t& base_word, uint
     constexpr uint32_t size_128 = (127u << 13) | 127u;
     const auto dimensions = size & size_mask;
     if ((base_word & 63) != 20 || (dimensions != size_64 && dimensions != size_128)) return false;
-    const auto mode = button_icons.load(std::memory_order_relaxed);
-    if (mode != ButtonIcons::PlayStation && mode != ButtonIcons::Keyboard) return false;
+    const auto mode = ResolvedButtonIcons();
+    if (mode == ButtonIcons::Xbox && XboxSpritePixels().empty()) return false;
     const int face = WorldPromptFace(*mem, base_word & kPageMask, dimensions == size_64 ? 16 : 32);
     if (face < 0 || !HasPromptSprites()) return false;
     constexpr int playstation_faces[] = {0, 3, 1, 2};
-    index = mode == ButtonIcons::Keyboard ? 12 + face : playstation_faces[face];
+    // World prompt faces are A, B, X, Y.
+    constexpr const char* face_actions[] = {"keybind_a", "keybind_b", "keybind_x", "keybind_y"};
+    const int key = mode == ButtonIcons::Keyboard ? KeyPromptSprite(face_actions[face]) : -1;
+    index = key >= 0 ? key : mode == ButtonIcons::Keyboard ? 12 + face :
+        mode == ButtonIcons::Xbox ? kXboxSpriteBase + playstation_faces[face] : playstation_faces[face];
   }
   auto& sprite = sprites[index];
   if (!sprite.virtual_address) {
@@ -289,8 +398,7 @@ bool BindPromptSprite(uint32_t& flags, uint32_t& size, uint32_t& base_word, uint
       heap->Release(address);
       return false;
     }
-    std::memcpy(mem->TranslateVirtual(address),
-                SpritePixels().data() + index * kSpritePage, kSpritePage);
+    std::memcpy(mem->TranslateVirtual(address), SpritePage(index), kSpritePage);
     sprite = {address, physical};
     REXLOG_INFO("Button Icons: prompt sprite {} ready", index);
   }
@@ -340,21 +448,32 @@ void TracePromptRenderer(uint32_t symbol, uint32_t alias, uint32_t callback) {
 }
 
 PromptDraw::PromptDraw(uint8_t* text) {
-  const auto mode = button_icons.load(std::memory_order_relaxed);
+  const auto mode = ResolvedButtonIcons();
   if ((mode != ButtonIcons::Keyboard && mode != ButtonIcons::PlayStation) || text[1] != ' ')
     return;
   if (mode == ButtonIcons::PlayStation && HasPromptSprites()) return;
   if (mode == ButtonIcons::Keyboard && text[0] == 26 && HasPromptSprites()) return;
+  // A keycap sprite exists for the bound key: keep the glyph so it draws as one.
+  if (mode == ButtonIcons::Keyboard && HasPromptSprites() && KeyPromptSprite(PromptAction(text[0])) >= 0) return;
   const bool keyboard = mode == ButtonIcons::Keyboard;
   const char* keycap = nullptr;
+  const char* action = nullptr;
   switch (text[0]) {
-    case 1: keycap = keyboard ? "[SPACE]" : "[CROSS]"; break;
-    case 2: keycap = keyboard ? "[L]" : "[SQUARE]"; break;
-    case 3: keycap = keyboard ? "[P]" : "[TRIANGLE]"; break;
-    case 4: keycap = keyboard ? "[BKSP]" : "[CIRCLE]"; break;
-    case 26: keycap = keyboard ? "[1]" : "[L1]"; break;
+    case 1: keycap = keyboard ? "[SPACE]" : "[CROSS]"; action = "keybind_a"; break;
+    case 2: keycap = keyboard ? "[L]" : "[SQUARE]"; action = "keybind_x"; break;
+    case 3: keycap = keyboard ? "[P]" : "[TRIANGLE]"; action = "keybind_y"; break;
+    case 4: keycap = keyboard ? "[BKSP]" : "[CIRCLE]"; action = "keybind_b"; break;
+    case 26: keycap = keyboard ? "[1]" : "[L1]"; action = "keybind_left_shoulder"; break;
   }
   if (!keycap) return;
+  std::string custom;
+  if (keyboard) {
+    auto binding = ben10::controls::PromptBinding(action);
+    if (!binding.empty()) {
+      custom = "[" + binding + "]";
+      keycap = custom.c_str();
+    }
+  }
   const auto size = std::strlen(keycap);
   const auto* end = static_cast<const uint8_t*>(std::memchr(text, 0, original_.size() - size));
   if (!end || end <= text + 1) return;
@@ -435,6 +554,40 @@ inline std::vector<Texture> ReadPack(const std::filesystem::path& path) {
     textures.push_back(std::move(item));
   }
   return file.peek() == std::char_traits<char>::eof() ? std::move(textures) : std::vector<Texture>{};
+}
+
+// Modern face icons for the stock menu and QTE textures (modern_face_icons.bin,
+// tools/build_modern_button_icons.cs), matched by archive key like the packs.
+std::vector<Texture> ModernFacePack(bool xbox) {
+  // gtex_s.xbx keys for A, B, X, Y: the 64 px HUD/tutorial/menu variants, then the round QTE icons.
+  static const std::vector<uint32_t> hud_faces[] = {
+      {0xD82646FD, 0x5556421E, 0xD155D06F, 0x5E1525CF, 0x96F5AABF, 0xEC35F9DF},
+      {0x56A9411E, 0x5FDAD78C, 0xDBD945FD, 0x187AAD5C, 0xD09A222C},
+      {0xBBD26CFD, 0xF50180BF, 0x36A2681E, 0x8FC1D3DF, 0x3DE10FCF, 0xB2A1FA6F},
+      {0xFA086880, 0x39AB8021, 0xF14B0F51, 0x7E0BFAF1, 0x62BAFE3C, 0x436BD341, 0x77786C63}};
+  static constexpr uint32_t round[] = {0x10FBCFF1, 0x9FBB3A51, 0x2D9BE641, 0x575BB521};
+  constexpr std::string_view magic("MFIC\1\0\0\0", 8);
+  constexpr size_t entry = 2 * kSpritePage;  // Base page + mip page.
+  const auto module = GetModuleHandleW(nullptr);
+  const auto resource = FindResourceW(module, MAKEINTRESOURCEW(106), MAKEINTRESOURCEW(10));
+  if (!resource || SizeofResource(module, resource) != magic.size() + 16 * entry) return {};
+  const auto data = LoadResource(module, resource);
+  const auto* bytes = data ? static_cast<const uint8_t*>(LockResource(data)) : nullptr;
+  if (!bytes || std::memcmp(bytes, magic.data(), magic.size()) != 0) return {};
+  std::vector<Texture> textures;
+  const auto add = [&](uint32_t key, uint32_t width, size_t index) {
+    Texture item{key, width, width, 20, kSpritePage, kSpritePage, 0, 0, 0};
+    const auto* source = bytes + magic.size() + index * entry;
+    item.replacement.assign(source, source + entry);
+    textures.push_back(std::move(item));
+  };
+  // Entries: style (Xbox, PlayStation), face (A, B, X, Y), width (64, 128).
+  for (size_t face = 0; face < 4; ++face) {
+    const size_t first = ((xbox ? 0 : 1) * 4 + face) * 2;
+    for (const auto key : hud_faces[face]) add(key, 64, first);
+    add(round[face], 128, first + 1);
+  }
+  return textures;
 }
 
 inline uint64_t Fingerprint(const uint8_t* bytes, uint32_t size, uint64_t hash = 14695981039346656037ull) {
@@ -632,7 +785,8 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
   static std::mutex lock;
   std::lock_guard guard(lock);
   static auto textures = [] {
-    auto pack = ReadPack(Pack == 0 ? pack_path : Pack == 1 ? button_icon_preview_path : keyboard_icon_path);
+    auto pack = Pack == 1 ? ModernFacePack(false) : Pack == 3 ? ModernFacePack(true) :
+        ReadPack(Pack == 0 ? pack_path : keyboard_icon_path);
     if constexpr (Pack != 0)
       REXLOG_INFO("Button Icons trace: mode={} loaded {} textures", Pack, pack.size());
     return pack;
@@ -769,11 +923,9 @@ void Apply(uint32_t flags, uint32_t size, uint32_t& base_word, uint32_t& mip_wor
       ApplyPack<0>(mem, flags, size, base_word, mip_word, true);
   } else if (albedo_hud::enabled.load(std::memory_order_relaxed))
     ApplyPack<0>(mem, flags, size, base_word, mip_word);
-  if (button_icon_preview_path.empty() && keyboard_icon_path.empty()) return;
-  auto mode = button_icons.load(std::memory_order_relaxed);
-  if (mode == ButtonIcons::Auto) mode = ConnectedControllerIcons();
-  if (mode == ButtonIcons::PlayStation && !button_icon_preview_path.empty())
-    ApplyPack<1>(mem, flags, size, base_word, mip_word);
+  const auto mode = ResolvedButtonIcons();
+  if (mode == ButtonIcons::PlayStation) ApplyPack<1>(mem, flags, size, base_word, mip_word);
+  if (mode == ButtonIcons::Xbox) ApplyPack<3>(mem, flags, size, base_word, mip_word);
   if (mode == ButtonIcons::Keyboard && !keyboard_icon_path.empty())
     ApplyPack<2>(mem, flags, size, base_word, mip_word);
 }

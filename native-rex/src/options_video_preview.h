@@ -1,6 +1,9 @@
 #pragma once
 
 #include "pc_menu_bridge.h"
+#include "keyboard_mouse_runtime.h"
+#include "fov_runtime.h"
+#include "music_session.h"
 
 namespace ben10_options {
 inline std::atomic<bool> mouse_captured{false};
@@ -24,19 +27,30 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     {"Frame Limit","frame_limit",{"30","60","120","unlimited"},{"30 FPS","60 FPS","120 FPS","Unlimited"},4},
     {"Show FPS","performance_overlay",{"on","off"},{"On","Off"},2},
     {"Display Mode","display_mode",{"windowed","borderless","exclusive"},{"Windowed","Borderless","Exclusive"},3},
-    {"Button Icons","button_icons",{"xbox","playstation","keyboard","auto"},{"Xbox","PlayStation","Keyboard","Auto"},4},
+    {"Button Icons","button_icons",{"xbox","playstation","keyboard","auto"},{"Xbox","PlayStation","Keyboard and Mouse","Auto"},4},
     {"Internal Resolution",nullptr,{},{"Original","Native (1x)","2x"},3},
     {"Anti-Aliasing",nullptr,{},{"Original","Off","FXAA","FXAA Extreme"},4},
     {"Texture Filtering",nullptr,{},{"Original","2x","4x","8x","16x"},5},
     {"Sharpening",nullptr,{},{"Original","Low","Medium","High"},4},
     {"Screen Bloom",nullptr,{},{"Original","Low","Medium","High"},4},
+    {"Game Monitor",nullptr,{}, {},0},
   };
   static constexpr int count_=int(std::size(rows_));
   static constexpr const char* gameplay_rows_[]={
       "Invert Up / Down","Invert Left / Right","Vibration",
-      "All Aliens","Hero Time (L3)","Play as Albedo","Wipe Data"};
-  static constexpr const char* sound_rows_[]={"Music Volume","SFX Volume","Voice Volume"};
-  static constexpr int wipe_row_=int(std::size(gameplay_rows_))-1;
+      "All Aliens","Hero Time (L3)","Play as Albedo","Background Controller Input",
+      "Customize Keyboard and Mouse Controls","Wipe Data","Field of View"};
+  static constexpr const char* sound_rows_[]={"Music Volume","SFX Volume","Voice Volume",
+      "Music Integration","Music Overlay Shortcut"};
+  // Rows before kVolumeRows are the game's own volumes (script snapshot);
+  // the music rows after them are saved directly to pc-sound.ini.
+  // Detection and ducking follow Music Integration. Music Priority is set in the
+  // gameplay music overlay only.
+  static constexpr int kVolumeRows=3, kIntegrationRow=3, kShortcutRow=4;
+  // Rows before controls_row_ mirror script switches; Field of View is ours, saved directly.
+  static constexpr int fov_row_=int(std::size(gameplay_rows_))-1;
+  static constexpr int wipe_row_=fov_row_-1;
+  static constexpr int controls_row_=wipe_row_-1;
   int selected_=0;
   bool confirm_wipe_=false;
   int current_page_=-1;
@@ -47,6 +61,8 @@ class VideoPage final : public rex::ui::ImGuiDialog {
   bool display_busy_=false;
   ImFont* font_;
   std::array<ImFontAtlasRectId,2> badges_;
+  std::vector<ben10::monitors::Monitor> monitors_;
+  ben10::controls::Editor controls_editor_;
 
   void Read(const std::filesystem::path& path) {
     using namespace ben10_pc_menu;
@@ -61,6 +77,11 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     values_[7]=GraphicsChoice<2>(path);
     values_[8]=GraphicsChoice<3>(path);
     values_[9]=GraphicsChoice<4>(path);
+    monitors_=ben10::monitors::Enumerate();
+    std::string monitor;
+    std::ifstream file(path.parent_path()/"monitor.txt");
+    std::getline(file,monitor);
+    values_[10]=ben10::monitors::Find(monitors_,monitor);
   }
 
   void Apply() {
@@ -69,14 +90,23 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     auto* active=window.load();
     if(!active || values_==saved_ || display_busy_)return;
     display_busy_=true;
-    if(!active->app_context().CallInUIThreadDeferred([this,values=values_,saved=saved_] {
+    const auto monitor=monitors_[values_[10]].id;
+    if(!active->app_context().CallInUIThreadDeferred([this,values=values_,saved=saved_,monitor] {
       auto* host=runtime.load();auto* active=window.load();
       if(!host || !active)return;
       const auto path=host->user_data_root()/"pc-video.ini";
       try {
-        if(values[0]!=saved[0] || values[3]!=saved[3]) {
+        if(values[0]!=saved[0] || values[3]!=saved[3] || values[10]!=saved[10]) {
           std::lock_guard guard(video_settings_mutex);
-          if(values[3]!=saved[3] || values[3]!=1)ApplyPresentation(active,values[3],values[0]);
+          if(values[3]!=saved[3] || values[3]!=1 || values[10]!=saved[10])
+            ApplyPresentation(active,values[3],values[0],&monitor);
+          auto target=path.parent_path()/"monitor.txt";
+          auto temporary=target;temporary+=L".presentation.tmp";
+          {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);
+           file<<monitor;file.close();
+           if(!file)throw std::runtime_error("Could not save monitor selection");}
+          if(!MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+            throw std::runtime_error("Could not commit monitor selection");
           SaveVideoKey(path,"resolution",rows_[0].values[values[0]]);
           SaveVideoKey(path,"display_mode",rows_[3].values[values[3]]);
         }
@@ -89,7 +119,7 @@ class VideoPage final : public rex::ui::ImGuiDialog {
         if(values[1]!=saved[1])rates[values[1]](context,nullptr);
         if(values[2]!=saved[2])fps[values[2]](context,nullptr);
         if(values[4]!=saved[4])icons[values[4]](context,nullptr);
-        for(int i=5;i<count_;++i)if(values[i]!=saved[i]) {
+        for(int i=5;i<10;++i)if(values[i]!=saved[i]) {
           const auto& setting=GraphicsSettings[i-5];
           std::lock_guard guard(video_settings_mutex);
           SaveVideoKey(path,setting.key,setting.values[values[i]]);
@@ -102,18 +132,40 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     }))display_busy_=false;
   }
 
+  void SyncMusic() {
+    const auto music=ben10::music::CurrentSettings();
+    values_[kIntegrationRow]=saved_[kIntegrationRow]=music.integration;
+  }
+
   void Change(int direction) {
     if(display_busy_)return;
     if(ben10_pc_menu::gameplay_preview::active.load()) {
-      if(!confirm_wipe_ && selected_<wipe_row_ && !ben10_pc_menu::gameplay_preview::pending.load())
+      if(selected_==fov_row_ && !confirm_wipe_) {
+        // Applies immediately and saves to the file the launcher also uses.
+        const int degrees=ben10::fov::Clamp(values_[fov_row_]+direction);
+        values_[fov_row_]=saved_[fov_row_]=degrees;
+        ben10::fov::offset=degrees;
+        if(auto* host=ben10_pc_menu::runtime.load())
+          ben10::fov::Save(host->user_data_root()/"pc-gameplay.ini",degrees);
+        return;
+      }
+      if(!confirm_wipe_ && selected_<controls_row_ && !ben10_pc_menu::gameplay_preview::pending.load())
         values_[selected_]^=1;
       return;
     }
     if(ben10_pc_menu::sound_preview::active.load()) {
+      if(selected_>=kVolumeRows) {
+        auto music=ben10::music::CurrentSettings();
+        if(selected_==kIntegrationRow)music.integration=!music.integration;
+        if(selected_==kShortcutRow)return;
+        ben10::music::UpdateSettings(music);  // Applies immediately and saves.
+        SyncMusic();
+        return;
+      }
       values_[selected_]=std::clamp(values_[selected_]+direction,0,int(ben10_pc_menu::sound_preview::step_count));
       return;
     }
-    const int n=rows_[selected_].count;
+    const int n=selected_==10?int(monitors_.size()):rows_[selected_].count;
     values_[selected_]=(values_[selected_]+direction+n)%n;
   }
 
@@ -123,6 +175,15 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     if(!CapturesGameInput())return;
     auto* host=ben10_pc_menu::runtime.load();
     if(!host)return;
+    if(controls_editor_.open) {
+      mouse_captured=true;
+      controls_editor_.Draw(host->user_data_root(),ben10::controls::Apply);
+      if(!controls_editor_.open) {
+        opening_guard=true;
+        last_buttons_=0;
+      }
+      return;
+    }
     const auto sample=controller_sample.load(std::memory_order_relaxed);
     const uint16_t buttons=uint16_t(sample);
     const ImGuiKey menu_keys[]={ImGuiKey_Escape,ImGuiKey_Backspace,ImGuiKey_Enter,ImGuiKey_Space,
@@ -142,12 +203,14 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     const int row_count=is_hub?(hub::credits.load()?4:3):is_sound?int(std::size(sound_rows_)):is_gameplay?int(std::size(gameplay_rows_)):count_;
     const auto sync_sound=[&] {
       const auto bits=sound::snapshot.load();
-      for(int i=0;i<int(std::size(sound_rows_));++i)values_[i]=int((bits>>(i*5))&31u);
+      for(int i=0;i<kVolumeRows;++i)values_[i]=int((bits>>(i*5))&31u);
       saved_=values_;
+      SyncMusic();
     };
     const auto sync_gameplay=[&] {
       const auto bits=gameplay::snapshot.load();
-      for(int i=0;i<wipe_row_;++i)values_[i]=int((bits>>i)&1u);
+      for(int i=0;i<controls_row_;++i)values_[i]=int((bits>>i)&1u);
+      values_[fov_row_]=ben10::fov::offset.load();
       saved_=values_;
     };
     if(!loaded_ || page!=current_page_) {
@@ -227,9 +290,14 @@ class VideoPage final : public rex::ui::ImGuiDialog {
           vertex.pos.y=pos.y+dy;
         }
       };
-      auto hit=[&](const char* id,float x,float y,float w,float h){
+      // Hovering a row or tile selects it, like the stock menus; only an actual
+      // mouse movement does, so a resting cursor never fights the pad.
+      const bool mouse_moved=io.MouseDelta.x!=0 || io.MouseDelta.y!=0;
+      auto hit=[&](const char* id,float x,float y,float w,float h,int row=-1){
         ImGui::SetCursorScreenPos(point(x,y));
-        return ImGui::InvisibleButton(id,ImVec2(w*scale,h*scale));
+        const bool clicked=ImGui::InvisibleButton(id,ImVec2(w*scale,h*scale));
+        if(row>=0 && mouse_moved && !confirm_wipe_ && ImGui::IsItemHovered())selected_=row;
+        return clicked;
       };
       auto triangle=[&](float x,float y,float sign,ImU32 color){
         draw->AddTriangleFilled(point(x+sign*5,y),point(x-sign*3,y-6),point(x-sign*3,y+6),color);
@@ -270,7 +338,7 @@ class VideoPage final : public rex::ui::ImGuiDialog {
         for(int i=0;i<row_count;++i) {
           const float x=left+i*(width+gap), y=241, cx=x+width*.5f, cy=y+79;
           ImGui::PushID(i);
-          if(hit("tile",x,y,width,213)){selected_=i;tile_clicked=true;}
+          if(hit("tile",x,y,width,213,i)){selected_=i;tile_clicked=true;}
           ImGui::PopID();
           const bool focused=i==selected_;
           if(focused)polygon(x-5,y-5,width+10,223,25,panel,theme(IM_COL32(110,205,18,75),IM_COL32(239,40,30,75)),10);
@@ -311,10 +379,13 @@ class VideoPage final : public rex::ui::ImGuiDialog {
       }
       for(int i=0;!is_hub && i<row_count;++i) {
         ImGui::PushID(i);
-        const float y=is_sound?269+i*56.0f:is_gameplay?176+i*57.0f:154+i*42.0f;
-        if(!confirm_wipe_ && hit("row",160,y,635,35))selected_=i;
-        if(hit("previous",796,y,56,35)){selected_=i;Change(-1);}
-        if(hit("next",1068,y,52,35)){selected_=i;Change(1);}
+        const float y=is_sound?176+i*50.0f:is_gameplay?176+i*42.0f:154+i*39.0f;
+        if(!confirm_wipe_ && hit("row",160,y,635,35,i)) {
+          selected_=i;
+          if(is_gameplay && i==controls_row_)controls_editor_.Open(host->user_data_root());
+        }
+        if(hit("previous",796,y,56,35,i)){selected_=i;Change(-1);}
+        if(hit("next",1068,y,52,35,i)){selected_=i;Change(1);}
         const bool focused=i==selected_;
         if(focused && is_sound)polygon(153,y-2,974,39,13,theme(IM_COL32(76,140,12,115),IM_COL32(140,31,27,115)),theme(IM_COL32(155,246,49,115),IM_COL32(246,68,62,115)),5);
         else if(focused)polygon(153,y-2,974,39,13,theme(IM_COL32(77,139,25,100),IM_COL32(139,38,32,100)),theme(IM_COL32(149,245,48,80),IM_COL32(245,66,58,80)),5);
@@ -328,8 +399,17 @@ class VideoPage final : public rex::ui::ImGuiDialog {
         if(!is_sound)draw->AddConvexPolyFilled(value_panel,4,theme(IM_COL32(2,8,3,125),IM_COL32(8,2,3,125)));
         if(!is_sound)draw->AddLine(point(817,y+3),point(792,y+32),focused?selected:line,2*scale);
         if(!is_sound)draw->AddLine(point(177,y+33),point(784,y+33),focused?selected:line,scale);
-        label(is_sound?sound_rows_[i]:is_gameplay?gameplay_rows_[i]:rows_[i].name,23,187,y+5,white);
-        if(is_sound) {
+        label(is_sound?sound_rows_[i]:is_gameplay?gameplay_rows_[i]:rows_[i].name,
+            is_gameplay && i==controls_row_?19:23,187,y+5,white);
+        if(is_sound && i>=kVolumeRows) {
+          const std::string value=i==kShortcutRow?std::string("M  |  View / Share"):
+std::string(values_[i]?"On":"Off");
+          label(value.c_str(),i==kShortcutRow?17:21,960,y+7,focused?selected:white,true);
+          if(i!=kShortcutRow) {
+            triangle(826,y+18,-1,focused?selected:accent);
+            triangle(1093,y+18,1,focused?selected:accent);
+          }
+        } else if(is_sound) {
           for(int segment=0;segment<8;++segment) {
             const float x=844+segment*23.0f;
             const ImVec2 bar[]={point(x+5,y+10),point(x+22,y+10),point(x+17,y+25),point(x,y+25)};
@@ -342,11 +422,33 @@ class VideoPage final : public rex::ui::ImGuiDialog {
           }
           const auto percent=std::to_string(values_[i]*5)+"%";
           label(percent.c_str(),18,1058,y+9,white,true);
+        } else if(is_gameplay && i==controls_row_) {
+          label("OPEN",20,960,y+7,selected,true);
+          if(hit("customize",796,y,324,35))controls_editor_.Open(host->user_data_root());
         } else if(is_gameplay && i==wipe_row_) {
           label(confirm_wipe_?"CONFIRM RESET":"RESET PROGRESS",20,960,y+7,selected,true);
+        } else if(is_gameplay && i==fov_row_) {
+          // Slider: the track spans -20..+30 degrees; drag or click it, or use the arrows.
+          const float left=852,right=1062,track=y+28;
+          const float fraction=float(values_[i]-ben10::fov::kMin)/float(ben10::fov::kMax-ben10::fov::kMin);
+          draw->AddLine(point(left,track),point(right,track),line,3*scale);
+          draw->AddLine(point(left,track),point(left+(right-left)*fraction,track),focused?selected:accent,3*scale);
+          draw->AddCircleFilled(point(left+(right-left)*fraction,track),5*scale,focused?selected:accent);
+          ImGui::SetCursorScreenPos(point(left,y+18));
+          ImGui::InvisibleButton("fov_track",ImVec2((right-left)*scale,17*scale));
+          if(ImGui::IsItemActive() && !confirm_wipe_) {
+            selected_=i;
+            const float at=std::clamp((io.MousePos.x-point(left,0).x)/((right-left)*scale),0.0f,1.0f);
+            const int degrees=ben10::fov::kMin+int(std::lround(at*(ben10::fov::kMax-ben10::fov::kMin)));
+            if(degrees!=values_[i])Change(degrees-values_[i]);
+          }
+          label(ben10::fov::Label(values_[i]).c_str(),18,960,y+1,focused?selected:white,true);
+          triangle(826,y+18,-1,focused?selected:accent);
+          triangle(1093,y+18,1,focused?selected:accent);
         } else {
-          const char* value=is_gameplay?(values_[i]?"On":"Off"):rows_[i].labels[values_[i]];
-          label(value,23,960,y+5,focused?selected:white,true);
+          const char* value=is_gameplay?(values_[i]?"On":"Off"):
+              i==10?monitors_[values_[i]].label.c_str():rows_[i].labels[values_[i]];
+          label(value,!is_gameplay && i==10?15:23,960,y+5,focused?selected:white,true);
           triangle(826,y+18,-1,focused?selected:accent);
           triangle(1093,y+18,1,focused?selected:accent);
         }
@@ -357,7 +459,13 @@ class VideoPage final : public rex::ui::ImGuiDialog {
       const auto icons=ben10::albedo_textures::button_icons.load(std::memory_order_relaxed);
       auto prompt=[&](bool confirm,float x,float y,float width) {
         const float cx=x+24, cy=y+20;
-        if(icons==Icons::Keyboard) {
+        // The page also accepts pad A/B, so show the keys bound to them, like the game prompts.
+        ImFontAtlasRect keycap;
+        const auto key=icons==Icons::Keyboard?
+            ben10::controls::KeyIcon(confirm?"keybind_a":"keybind_b"):ImFontAtlasRectId_Invalid;
+        if(key!=ImFontAtlasRectId_Invalid && io.Fonts->GetCustomRect(key,&keycap)) {
+          draw->AddImage(io.Fonts->TexRef,point(cx-17,cy-17),point(cx+17,cy+17),keycap.uv0,keycap.uv1);
+        } else if(icons==Icons::Keyboard) {
           draw->AddRect(point(cx-16,cy-10),point(cx+16,cy+10),white,3*scale,0,scale);
           label(confirm?"ENT":"ESC",12,cx,cy-6,white,true);
         } else {
@@ -390,24 +498,25 @@ class VideoPage final : public rex::ui::ImGuiDialog {
         } else if(is_sound) {
           if(!sound::pending.load() && values_!=saved_) {
             unsigned bits=0;
-            for(int i=0;i<row_count;++i)bits|=unsigned(values_[i])<<(i*5);
+            for(int i=0;i<kVolumeRows;++i)bits|=unsigned(values_[i])<<(i*5);
             display_busy_=true;
             sound::pending=sound::apply_flag|bits;
           }
         } else if(!is_gameplay)Apply();
         else if(!gameplay::pending.load()) {
           if(confirm_wipe_)gameplay::pending=gameplay::wipe;
+          else if(selected_==controls_row_)controls_editor_.Open(host->user_data_root());
           else if(selected_==wipe_row_)confirm_wipe_=true;
           else if(values_!=saved_) {
             unsigned bits=0;
-            for(int i=0;i<wipe_row_;++i)bits|=unsigned(values_[i])<<i;
+            for(int i=0;i<controls_row_;++i)bits|=unsigned(values_[i])<<i;
             display_busy_=true;
             gameplay::pending=gameplay::apply_flag|bits;
           }
         }
       }
       if(!is_hub)label(is_gameplay?(confirm_wipe_?"Reset saved progress? Backup kept.":"Left / Right to change  |  Select to apply"):
-            (!is_sound && selected_>=5?"Select to save  |  Applies after restart":"Left / Right to change  |  Select to apply"),
+            (!is_sound && selected_>=5 && selected_<10?"Select to save  |  Applies after restart":"Left / Right to change  |  Select to apply"),
             17,640,633,white,true);
       draw->Flags=draw_flags;
     }

@@ -470,6 +470,196 @@ namespace CosmicRecompi {
             return Pack(rows);
         }
 
+        internal static byte[] MenuCursorHooks(byte[] frontend) {
+            var rows=Parse(frontend);
+            var pause=rows.Find(row=>row.Id==Crc("pausemenu_enter"));
+            var resume=rows.Find(row=>row.Id==Crc("pausemenu_exit"));
+            if(pause==null || resume==null)throw new InvalidDataException("Pause menu lifecycle missing.");
+            var opening=new Injection();
+            PreviewNative(opening,"cosmic_mouse_pause_menu",0);
+            var closing=new Injection();
+            PreviewNative(closing,"cosmic_mouse_resume_game",0);
+            pause.Code=Relocate(pause.Code,new Dictionary<int,Injection>{{0,opening}});
+            resume.Code=Relocate(resume.Code,new Dictionary<int,Injection>{{0,closing}});
+            return Pack(rows);
+        }
+
+        // Stock menus (title, Level Select, Cheats, pause and their submenus)
+        // share one input routine. Before it reads the pad, ask the bridge
+        // which row is under the mouse and whether it was clicked.
+        internal static byte[] MenuMouseHooks(byte[] menu) {
+            const uint selectedField=0x74a09b28;
+            var rows=Parse(menu);
+            var input=rows.Find(r=>r.Id==0x4226eb33);
+            if(input==null || input.Code.Length!=271*4 ||
+                Read(input.Code,20*4)!=0x00030117 || Read(input.Code,21*4)!=0x121e04c6 ||
+                Read(input.Code,46*4)!=0x00000f07 || Read(input.Code,57*4)!=0x00100106 ||
+                Read(input.Code,62*4)!=0x00010e1d ||
+                Read(input.Code,220*4)!=0x00030017 || Read(input.Code,221*4)!=Crc("options"))
+                throw new InvalidDataException("Unexpected menu input routine.");
+            var mouse=new Injection();
+            // Same lock test as every stock input branch.
+            mouse.Add(0x002c0017,0xe5a0165e,0x00002d02,0x2e2d2c10);
+            int locked=mouse.Fixups.Count;
+            mouse.Branch(46,0,true);
+            mouse.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_menu_poll"));
+            // Skip until the bridge registry has added the PC callbacks.
+            int unregistered=mouse.Fixups.Count;
+            mouse.Branch(30,0,true);
+            mouse.Add(0x00290017,0x90274abc,0x002a0017,selectedField,0x002b0017,0xb87458ce,
+                0x04281e20,12,0x00000d03,0,0x0e0d0c10);
+            int hovered=mouse.Fixups.Count;
+            mouse.Branch(14,0,true);
+            int unchanged=mouse.Fixups.Count;
+            mouse.Jump(0,true);
+            mouse.Fixups[hovered].Target=mouse.Words.Count;
+            // New row: store it, play the stock move sound, then refresh with a
+            // synthetic Down press so the stock glow slides to the row as well.
+            mouse.Add(0x000c0019,selectedField);
+            for(int i=46;i<57;i++)mouse.Add(Read(input.Code,i*4));
+            mouse.Add(0x00001016,0x00011102,0x00111019,0xeebfc3e9);
+            for(int i=58;i<62;i++)mouse.Add(Read(input.Code,i*4));
+            // The glow animation locks input; a pending click confirms afterwards.
+            int moved=mouse.Fixups.Count;
+            mouse.Jump(0,true);
+            mouse.Fixups[unchanged].Target=mouse.Words.Count;
+            mouse.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_menu_click"),0x01281e20,12,
+                0x00000d03,0,0x0e0d0c10);
+            // A click runs the stock confirm branch for the selected row.
+            mouse.Branch(14,220);
+            mouse.Fixups[locked].Target=mouse.Fixups[unregistered].Target=
+                mouse.Fixups[moved].Target=mouse.Words.Count;
+            input.Code=Relocate(input.Code,new Dictionary<int,Injection>{{20,mouse}});
+            return Pack(rows);
+        }
+
+        static uint FloatWord(float value){return BitConverter.ToUInt32(BitConverter.GetBytes(value),0);}
+        // Level Select (misscr.ds) turns its level wheel from the stick angle.
+        // A mouse over the ring supplies its own angle, and a click confirms.
+        internal static byte[] LevelSelectMouseHooks(byte[] misscr) {
+            var rows=Parse(misscr);
+            var enter=rows.Find(r=>r.Id==Crc("LevelSelect_Enter"));
+            var wheel=rows.Find(r=>r.Id==0x05cd2401);
+            var input=rows.Find(r=>r.Id==0x2b451513);
+            uint centerX=FloatWord(.35f),centerY=FloatWord(.485f);
+            if(enter==null || Read(enter.Code,56*4)!=0x00001603 || Read(enter.Code,57*4)!=centerX ||
+                Read(enter.Code,58*4)!=0x00001703 || Read(enter.Code,59*4)!=centerY ||
+                wheel==null || wheel.Code.Length!=99*4 || Read(wheel.Code,12*4)!=0x00100106 ||
+                Read(wheel.Code,30*4)!=0x00100006 ||
+                input==null || input.Code.Length!=331*4 || Read(input.Code,249*4)!=0x00020117 ||
+                Read(input.Code,250*4)!=0xe585980f || Read(input.Code,251*4)!=0x00000b07)
+                throw new InvalidDataException("Unexpected Level Select wheel.");
+            var angle=new Injection();
+            angle.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_wheel_poll"));
+            int unregistered=angle.Fixups.Count;
+            angle.Branch(30,0,true);
+            angle.Add(0x00002903,centerX,0x00002a03,centerY,0x03281e20,12,
+                0x00000d03,FloatWord(-1),0x0e0d0c10);
+            // -1: the mouse did not move onto the ring; keep the stick path.
+            int stick=angle.Fixups.Count;
+            angle.Branch(14,0,true);
+            int keep=angle.Fixups.Count;
+            angle.Jump(0,true);
+            angle.Fixups[stick].Target=angle.Words.Count;
+            // Same slot lookup and selection as a fully deflected stick.
+            angle.Add(0x00030c06);
+            angle.Jump(30);
+            angle.Fixups[unregistered].Target=angle.Fixups[keep].Target=angle.Words.Count;
+            wheel.Code=Relocate(wheel.Code,new Dictionary<int,Injection>{{12,angle}});
+
+            var click=new Injection();
+            click.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_wheel_click"));
+            int missing=click.Fixups.Count;
+            click.Branch(30,0,true);
+            // Confirm = stock button OR a click on the ring (r2 feeds the stock test).
+            click.Add(0x01281e20,12,0x00000d03,FloatWord(1),0x0e0d0c10,0x020e0215);
+            click.Fixups[missing].Target=click.Words.Count;
+            input.Code=Relocate(input.Code,new Dictionary<int,Injection>{{251,click}});
+            return Pack(rows);
+        }
+
+        // Circular-display wheels read their centre and radius from the wheel
+        // itself (fields set by the 0x5c7f3148 constructor).
+        static Injection RingAngle(int angleTarget,bool loadSelection) {
+            var angle=new Injection();
+            angle.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_ring_poll"));
+            int unregistered=angle.Fixups.Count;
+            angle.Branch(30,0,true);
+            angle.Add(0x00290017,0xf05768d1,0x002a0017,0x48eb0fb4,0x002b0017,Crc("radius"),
+                0x04281e20,12,0x00000d03,FloatWord(-1),0x0e0d0c10);
+            int stick=angle.Fixups.Count;
+            angle.Branch(14,0,true);
+            int keep=angle.Fixups.Count;
+            angle.Jump(0,true);
+            angle.Fixups[stick].Target=angle.Words.Count;
+            angle.Add(0x00030c06);
+            if(loadSelection)angle.Add(0x00050017,0x251d339d);
+            angle.Jump(angleTarget);
+            angle.Fixups[unregistered].Target=angle.Fixups[keep].Target=angle.Words.Count;
+            return angle;
+        }
+        // Upgrades (CharacterUpgradeSelectScreen) and form assignment wheels.
+        // The Four Arms bridge also edits the upgrade routines, only after these sites.
+        internal static byte[] CircularWheelMouseHooks(byte[] circdisp) {
+            var rows=Parse(circdisp);
+            var upgrades=rows.Find(r=>r.Id==0xe5e99c9c);
+            var forms=rows.Find(r=>r.Id==0xed68ca65);
+            var tick=rows.Find(r=>r.Id==0x53573a0e);
+            if(upgrades==null || upgrades.Code.Length<217*4 || Read(upgrades.Code,0)!=0x00130106 ||
+                Read(upgrades.Code,37*4)!=0x00130006 || Read(upgrades.Code,38*4)!=0x00140306 ||
+                forms==null || forms.Code.Length!=68*4 || Read(forms.Code,0)!=0x000b0106 ||
+                Read(forms.Code,38*4)!=0x00000803 || Read(forms.Code,43*4)!=0x000b0006 ||
+                tick==null || tick.Code.Length<175*4 || Read(tick.Code,31*4)!=0x00090006 ||
+                Read(tick.Code,32*4)!=0x00000607 || Read(tick.Code,33*4)!=0x89b23d71 ||
+                Read(tick.Code,41*4)!=0x00090006 || Read(tick.Code,42*4)!=0x00000607 ||
+                Read(tick.Code,43*4)!=0x0dcc555d || Read(tick.Code,46*4)!=0x00000607)
+                throw new InvalidDataException("Unexpected circular display input.");
+            // Same slot lookup as a fully deflected stick.
+            upgrades.Code=Relocate(upgrades.Code,new Dictionary<int,Injection>{{0,RingAngle(37,false)}});
+            forms.Code=Relocate(forms.Code,new Dictionary<int,Injection>{{0,RingAngle(38,true)}});
+
+            // Left click is also bound to X (Auto Upgrade); a click on the
+            // wheel must not open that prompt, so skip X while it is held.
+            var held=new Injection();
+            held.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_button_held"));
+            int noHeld=held.Fixups.Count;
+            held.Branch(30,0,true);
+            held.Add(0x01281e20,12,0x00000d03,FloatWord(1),0x0e0d0c10);
+            int released=held.Fixups.Count;
+            held.Branch(14,0,true);
+            held.Jump(41);
+            held.Fixups[noHeld].Target=held.Fixups[released].Target=held.Words.Count;
+            // Confirm = stock button OR a click on the ring.
+            var click=new Injection();
+            click.Add(0x00002807,Crc("overlay"),0x001e2817,Crc("cosmic_mouse_wheel_click"));
+            int missing=click.Fixups.Count;
+            click.Branch(30,0,true);
+            click.Add(0x01281e20,12,0x00000d03,FloatWord(1),0x0e0d0c10,0x020e0215);
+            click.Fixups[missing].Target=click.Words.Count;
+            tick.Code=Relocate(tick.Code,new Dictionary<int,Injection>{{31,held},{46,click}});
+            return Pack(rows);
+        }
+
+        // An earlier build of MenuMouseHooks: identical except the hooked routine.
+        internal static bool IsMenuMouseVariant(byte[] current,byte[] unhooked) {
+            List<Record> rows,stock;
+            try{rows=Parse(current);stock=Parse(unhooked);}catch(InvalidDataException){return false;}
+            if(rows.Count!=stock.Count)return false;
+            byte[] poll=Bytes(new uint[]{Crc("cosmic_mouse_menu_poll")});
+            for(int i=0;i<rows.Count;i++) {
+                if(rows[i].Id!=stock[i].Id || rows[i].Args!=stock[i].Args)return false;
+                if(rows[i].Id!=0x4226eb33) {
+                    if(Hash(rows[i].Code)!=Hash(stock[i].Code))return false;
+                    continue;
+                }
+                bool hooked=false;
+                for(int p=0;p+4<=rows[i].Code.Length && !hooked;p+=4)
+                    hooked=Read(rows[i].Code,p)==Read(poll,0);
+                if(!hooked)return false;
+            }
+            return true;
+        }
+
         internal static byte[] AlignPauseMenu(byte[] frontend,bool previous=false) {
             const uint menuAnchorField=0xb87458ce, optionCountField=0x90274abc;
             const uint negativePitchAdjustment=0xbc1374bc; // -.009
@@ -713,6 +903,7 @@ namespace CosmicRecompi {
                 if(Hash(original)!=hashes[i])throw new InvalidDataException("Unsupported original form script: "+names[i]);
                 byte[] updated=Transform(names[i],original),current=File.ReadAllBytes(path);
                 byte[] previous=updated;
+                if(names[i]=="circdisp.ds")updated=CircularWheelMouseHooks(updated);
 #if COSMIC_NATIVE_SETTINGS
                 if(names[i]=="globals.ds")updated=SyncLauncherGameplay(updated,true);
 #endif

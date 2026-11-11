@@ -18,6 +18,10 @@
 #include <charconv>
 #include "../cosmic_window_icon.h"
 #include "cinematic_zip.h"
+#include "../../native-rex/src/pc_monitors.h"
+#include "../../native-rex/src/keyboard_mouse_controls.h"
+#include "../../native-rex/src/fov_setting.h"
+#include "../../native-rex/src/music_settings.h"
 
 namespace fs = std::filesystem;
 static fs::path root;
@@ -42,7 +46,64 @@ static constexpr GameplayOption gameplayOptions[]={
     {"all_aliens","All Aliens",false},
     {"hero_time","Hero Time (L3)",false},
     {"albedo_hud_preview","Play as Albedo",false},
+    {"background_controller_input","Background Controller Input",false},
 };
+
+// Music, SFX and Voice volumes live in the game's profile settings.dat:
+// records of a big-endian key, a type byte (1 = float), 0xBB padding and a
+// big-endian value. The game stores them in 5% steps.
+static constexpr uint32_t volumeKeys[]={0x3faa0027,0x2d16f1ee,0x1fdf5f40};
+static constexpr const char* volumeLabels[]={"Music Volume","SFX Volume","Voice Volume"};
+static fs::path game_settings_file() {
+    fs::path newest;
+    fs::file_time_type newest_time{};
+    std::error_code error;
+    for(const auto& profile:fs::directory_iterator(installation()/"user",error)) {
+        const auto folder=profile.path()/"445007F7";
+        if(!fs::is_directory(folder,error))continue;
+        for(const auto& slot:fs::directory_iterator(folder,error)) {
+            const auto file=slot.path()/"settings.dat"/"settings.dat";
+            if(!fs::is_regular_file(file,error))continue;
+            const auto time=fs::last_write_time(file,error);
+            if(newest.empty() || time>newest_time){newest=file;newest_time=time;}
+        }
+    }
+    return newest;
+}
+static size_t find_volume(const std::string& data, uint32_t key) {
+    for(size_t offset=0;offset+12<=data.size();offset+=4) {
+        const auto* bytes=reinterpret_cast<const unsigned char*>(data.data()+offset);
+        const uint32_t value=uint32_t(bytes[0])<<24|uint32_t(bytes[1])<<16|uint32_t(bytes[2])<<8|bytes[3];
+        if(value==key && bytes[4]==1 && bytes[5]==0xbb && bytes[6]==0xbb && bytes[7]==0xbb)return offset+8;
+    }
+    return std::string::npos;
+}
+static int read_volume(const std::string& data, uint32_t key) {
+    const auto offset=find_volume(data,key);
+    if(offset==std::string::npos)return -1;
+    const auto* bytes=reinterpret_cast<const unsigned char*>(data.data()+offset);
+    const uint32_t bits=uint32_t(bytes[0])<<24|uint32_t(bytes[1])<<16|uint32_t(bytes[2])<<8|bytes[3];
+    float value;
+    std::memcpy(&value,&bits,sizeof(value));
+    return std::isfinite(value)?int(std::lround(std::clamp(value,0.0f,1.0f)*20))*5:-1;
+}
+static bool save_volume(const fs::path& path, uint32_t key, int percent) {
+    std::string data=read(path);
+    const auto offset=find_volume(data,key);
+    if(offset==std::string::npos)return false;
+    const float value=float(std::clamp(percent,0,100)/5)/20.0f;
+    uint32_t bits;
+    std::memcpy(&bits,&value,sizeof(bits));
+    for(int i=0;i<4;++i)data[offset+i]=char(bits>>(24-i*8));
+    auto temporary=path;
+    temporary+=L".tmp";
+    {
+        std::ofstream output(temporary,std::ios::binary|std::ios::trunc);
+        output.write(data.data(),std::streamsize(data.size()));
+        if(!output)return false;
+    }
+    return MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;
+}
 
 static bool read_gameplay_option(const fs::path& path, const GameplayOption& option) {
     std::ifstream file(path);
@@ -348,6 +409,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
         if(antiAliasing<0)antiAliasing=legacyPreset=="medium" || legacyPreset=="high"?2:0;
         if(textureFiltering<0)textureFiltering=legacyPreset=="low"?1:legacyPreset=="medium"?3:legacyPreset=="high"?4:0;
     }
+    auto monitors=ben10::monitors::Enumerate();
+    int monitor=ben10::monitors::Find(monitors,read(installation()/"user/monitor.txt"));
+    ben10::controls::Editor controlsEditor;
     Uint64 nextStatusRead=0;
     if(ready())status="Ready to play.";
     while (!quit) {
@@ -509,6 +573,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                     ImGui::TextUnformatted("Window mode");
                     ImGui::SetNextItemWidth(-1);
                     ImGui::Combo("##display-mode",&displayMode,"Windowed\0" "Borderless fullscreen\0" "Exclusive fullscreen\0");
+                    ImGui::TextUnformatted("Game Monitor");
+                    if(ImGui::BeginCombo("##game-monitor",monitors[monitor].label.c_str())) {
+                        monitors=ben10::monitors::Enumerate();
+                        monitor=std::min(monitor,int(monitors.size())-1);
+                        for(int i=0;i<int(monitors.size());++i)
+                            if(ImGui::Selectable(monitors[i].label.c_str(),monitor==i))monitor=i;
+                        ImGui::EndCombo();
+                    }
                     ImGui::Checkbox("Show FPS and frame time",&performanceOverlay);
                     auto cinematicCheckbox = [&](const char* label, const char* setting, bool& value) {
                         if (!ImGui::Checkbox(label, &value)) return;
@@ -593,6 +665,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                              file.flush();saved=bool(file);}
                             if(saved)saved=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
                         }
+                        if(saved) {
+                            auto monitorPath=installation()/"user/monitor.txt";
+                            auto temporary=monitorPath;temporary+=L".launcher.tmp";
+                            {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);
+                             file<<monitors[monitor].id;file.close();saved=bool(file);}
+                            if(saved)saved=MoveFileExW(temporary.c_str(),monitorPath.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
+                        }
                         status=saved?"Video settings saved.":"Could not save video settings. Check folder permissions.";
                     }
                     ImGui::EndTabItem();
@@ -606,8 +685,39 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                         if(ImGui::Checkbox(option.label,&value))
                             status=save_gameplay_option(path,option,value)?"Gameplay setting saved.":"Could not save gameplay setting.";
                     }
+                    int fov=ben10::fov::Read(path);
+                    const std::string fovText=ben10::fov::Label(fov);
+                    if(ImGui::SliderInt("Field of View",&fov,ben10::fov::kMin,ben10::fov::kMax,fovText.c_str()))
+                        status=ben10::fov::Save(path,fov)?"Gameplay setting saved.":"Could not save gameplay setting.";
+                    if(ImGui::Button("Customize Keyboard and Mouse Controls"))
+                        controlsEditor.Open(installation()/"user");
                     ImGui::EndDisabled();
                     ImGui::TextWrapped("Changes save immediately and apply when the game starts.");
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Sound")) {
+                    ImGui::Spacing();
+                    const auto path=installation()/"user/pc-sound.ini";
+                    auto music=ben10::music::ReadSettings(path);
+                    ImGui::BeginDisabled(!installed || worker.hProcess);
+                    ImGui::SeparatorText("Volume");
+                    const auto settingsFile=game_settings_file();
+                    const std::string settingsData=settingsFile.empty()?std::string():read(settingsFile);
+                    bool anyVolume=false;
+                    for(size_t i=0;i<std::size(volumeKeys);++i) {
+                        int volume=read_volume(settingsData,volumeKeys[i]);
+                        if(volume<0)continue;
+                        anyVolume=true;
+                        if(ImGui::SliderInt(volumeLabels[i],&volume,0,100,"%d%%"))
+                            status=save_volume(settingsFile,volumeKeys[i],volume)?"Sound setting saved.":"Could not save sound setting.";
+                    }
+                    if(!anyVolume)ImGui::TextWrapped("Start the game once to create your sound settings.");
+                    ImGui::SeparatorText("Music Integration");
+                    if(ImGui::Checkbox("Music Integration",&music.integration))
+                        status=ben10::music::SaveSettings(path,music)?"Sound setting saved.":"Could not save sound setting.";
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Detects Spotify and other media players and lowers the game audio while music plays. "
+                                      "Music overlay: M or View / Share during gameplay, where Music Priority is set.");
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Patches & saves")) {
@@ -628,6 +738,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
             ImGui::EndDisabled();
             ImGui::EndChild();
         }
+        controlsEditor.Draw(installation()/"user");
         ImGui::SetCursorPos(ImVec2(margin,footer+9));
         if (!settings) {
             if (status.rfind("Could not start",0)==0)

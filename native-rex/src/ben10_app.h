@@ -24,7 +24,12 @@
 #include "diagnostic_paths.h"
 #include "cinematic_player.h"
 #include "cinematic_subtitles.h"
+#include "keyboard_mouse_runtime.h"
+#include "fov_runtime.h"
+#include "music_overlay.h"
+#include "menu_cursor.h"
 #include <rex/input/input_system.h>
+#include <rex/input/mnk/mnk_input_driver.h>
 #include <rex/system/achievement_manager.h>
 
 class Ben10App : public rex::ReXApp {
@@ -45,15 +50,61 @@ class Ben10App : public rex::ReXApp {
     constexpr int size=128, bytes=size*size*4;
     std::vector<unsigned char> badge(bytes*2);
     std::ifstream file(user/"options-ultimatrix.rgba",std::ios::binary);
-    if(file.read(reinterpret_cast<char*>(badge.data()),badge.size()) && file.peek()==EOF) {
+    const bool has_badges=file.read(reinterpret_cast<char*>(badge.data()),badge.size()) && file.peek()==EOF;
+    if(has_badges)
       for(auto& id:options_badges_)id=atlas->AddCustomRect(size,size);
+    std::vector<unsigned char> cursor(bytes);
+    std::ifstream cursor_file(user/"omnitrix-cursor.rgba",std::ios::binary);
+    const bool has_cursor=cursor_file.read(reinterpret_cast<char*>(cursor.data()),cursor.size()) &&
+        cursor_file.peek()==EOF;
+    std::vector<unsigned char> albedo_cursor(cursor);
+    if(has_cursor) {
+      menu_cursor_sprite_=atlas->AddCustomRect(size,size);
+      menu_cursor_albedo_sprite_=atlas->AddCustomRect(size,size);
+      // Same green-to-red rule as tools/prepare_albedo_textures.py.
+      for(size_t i=0;i<albedo_cursor.size();i+=4) {
+        const int red=albedo_cursor[i],green=albedo_cursor[i+1],blue=albedo_cursor[i+2];
+        if(green>red+12 && green>blue+12) {
+          albedo_cursor[i]=static_cast<unsigned char>(green);
+          albedo_cursor[i+1]=static_cast<unsigned char>(red/3);
+        }
+      }
+    }
+    // Keycap icons for the Cosmic Options prompts (tools/build_keyboard_prompt_sprites.cs).
+    constexpr int key_side=64, key_bytes=key_side*key_side*4;
+    const unsigned char* key_pixels=nullptr;
+    uint32_t key_count=0;
+    if(const auto resource=FindResourceW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(104),MAKEINTRESOURCEW(10))) {
+      const auto bytes_size=SizeofResource(GetModuleHandleW(nullptr),resource);
+      const auto data=LoadResource(GetModuleHandleW(nullptr),resource);
+      const auto* bytes=data?static_cast<const unsigned char*>(LockResource(data)):nullptr;
+      if(bytes && bytes_size>=12 && std::memcmp(bytes,"KMIR\1\0\0\0",8)==0) {
+        std::memcpy(&key_count,bytes+8,sizeof(key_count));
+        if(key_count<=128 && bytes_size==12+key_count*(16+key_bytes))key_pixels=bytes+12;
+        else key_count=0;
+      }
+    }
+    ben10::controls::key_icons.clear();
+    for(uint32_t i=0;i<key_count;++i) {
+      const auto* name=reinterpret_cast<const char*>(key_pixels+i*(16+key_bytes));
+      ben10::controls::key_icons.emplace_back(std::string(name,strnlen(name,16)),
+          atlas->AddCustomRect(key_side,key_side));
+    }
+    if(has_badges || has_cursor || key_count) {
       unsigned char* pixels=nullptr;int width=0,height=0;
       atlas->GetTexDataAsRGBA32(&pixels,&width,&height);
-      for(int i=0;i<2;++i) {
+      const auto copy=[&](ImFontAtlasRectId id,const unsigned char* image,int side=size) {
         ImFontAtlasRect rect;
-        if(pixels && atlas->GetCustomRect(options_badges_[i],&rect))
-          for(int y=0;y<size;++y)
-            std::memcpy(pixels+((rect.y+y)*width+rect.x)*4,badge.data()+i*bytes+y*size*4,size*4);
+        if(pixels && atlas->GetCustomRect(id,&rect))
+          for(int y=0;y<side;++y)
+            std::memcpy(pixels+((rect.y+y)*width+rect.x)*4,image+y*side*4,side*4);
+      };
+      for(uint32_t i=0;i<key_count;++i)
+        copy(ben10::controls::key_icons[i].second,key_pixels+i*(16+key_bytes)+16,key_side);
+      if(has_badges)for(int i=0;i<2;++i)copy(options_badges_[i],badge.data()+i*bytes);
+      if(has_cursor) {
+        copy(menu_cursor_sprite_,cursor.data());
+        copy(menu_cursor_albedo_sprite_,albedo_cursor.data());
       }
     }
   }
@@ -69,6 +120,10 @@ class Ben10App : public rex::ReXApp {
     // a passive overlay driven by the original game's swap counter.
     if((!std::getenv("BEN10_REPLAY_INPUT_PATH") || std::getenv("BEN10_TEST_PERFORMANCE_OVERLAY")) && !std::getenv("BEN10_HIDE_PERFORMANCE_OVERLAY"))
       performance_overlay_=std::make_unique<Ben10PerformanceOverlay>(drawer);
+    if(ben10_pc_menu::enabled())
+      music_overlay_=std::make_unique<ben10::music_overlay::Overlay>(drawer,pc_video_font_,options_badges_,[this]{return immediate_drawer();});
+    if(menu_cursor_sprite_!=ImFontAtlasRectId_Invalid)
+      menu_cursor_=std::make_unique<ben10::MenuCursor>(drawer,menu_cursor_sprite_,menu_cursor_albedo_sprite_);
   }
 
   void OnConfigurePaths(rex::PathConfig& paths) override {
@@ -102,6 +157,9 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    // SDL may collect gamepad state while unfocused. The active callback below
+    // controls delivery to the game and leaves keyboard/mouse focus handling intact.
+    SetEnvironmentVariableA("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS","1");
     Ben10InitializeFrameCapture();
     if (std::getenv("BEN10_PORTABLE_ROOT")) {
       // Restore the original bank after the previous archive-based preview.
@@ -363,12 +421,28 @@ class Ben10App : public rex::ReXApp {
       ben10::albedo_textures::memory.store(runtime()->memory(),std::memory_order_release);
       ben10_pc_menu::runtime=runtime();
       ben10_pc_menu::window=window();
+      ben10::controls::Apply(ben10::controls::Read(runtime()->user_data_root()));
+      ben10::fov::offset=ben10::fov::Read(runtime()->user_data_root()/"pc-gameplay.ini");
+      REXLOG_INFO("Field of view offset: {} degrees",ben10::fov::offset.load());
+      ben10::music::Start(runtime()->user_data_root()/"pc-sound.ini");
       if(std::getenv("BEN10_PRESENTATION_API")) {
         auto path=runtime()->user_data_root()/"pc-video.ini";
         ben10_pc_menu::ApplyPresentation(window(),ben10_pc_menu::DisplayMode(path),ben10_pc_menu::ResolutionIndex(path));
       }
       auto* input=static_cast<rex::input::InputSystem*>(runtime()->input_system());
-      input->SetActiveCallback([] {
+      const bool tracks_missions=std::getenv("BEN10_DISCORD_STATUS_FILE")!=nullptr;
+      input->SetActiveCallback([tracks_missions] {
+        const bool in_gameplay=!ben10_pc_menu::pause_menu_active.load() &&
+            (!tracks_missions || ben10_pc_menu::mission_active.load());
+        // Screens with a mouse pointer (stock menus, upgrade and form wheels)
+        // need a free cursor; mouse look would recentre it every frame.
+        rex::input::mnk::SetMouseLookActive(in_gameplay && !ben10_pc_video::CapturesGameInput() &&
+            !ben10_options::mouse_captured.load(std::memory_order_relaxed) &&
+            !ben10_pc_menu::menu_mouse::Active());
+        auto* active=ben10_pc_menu::window.load();
+        if(!ben10_pc_menu::background_controller_input.load(std::memory_order_relaxed) &&
+            (!active || GetForegroundWindow()!=static_cast<HWND>(active->GetNativeWindowHandle())))
+          return false;
         return ben10_pc_video::polling_options || (!ben10_pc_video::CapturesGameInput() && !ben10_options::mouse_captured.load(std::memory_order_relaxed));
       });
     }
@@ -480,6 +554,8 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+    ben10::music::Stop();  // Also restores full game audio.
+    music_overlay_.reset();
 #ifdef _WIN32
     auto* graphics = runtime() ? runtime()->graphics_system() : nullptr;
     ben10::cinematic_player::Detach(graphics ? graphics->presenter() : nullptr);
@@ -491,6 +567,7 @@ class Ben10App : public rex::ReXApp {
     ben10_pc_menu::window=nullptr;
     ben10_pc_menu::runtime=nullptr;
     options_video_.reset();
+    menu_cursor_.reset();
     performance_overlay_.reset();
     cinematic_subtitles_.reset();
     if (capture_worker_.joinable()) { capture_worker_.request_stop();capture_worker_.join(); }
@@ -516,9 +593,13 @@ class Ben10App : public rex::ReXApp {
   // void OnConfigurePaths(rex::PathConfig& paths) override {}
  private:
   std::unique_ptr<ben10_options::VideoPage> options_video_;
+  std::unique_ptr<ben10::music_overlay::Overlay> music_overlay_;
   ImFont* pc_video_font_=nullptr;
   std::array<ImFontAtlasRectId,2> options_badges_{ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid};
   std::unique_ptr<Ben10PerformanceOverlay> performance_overlay_;
+  ImFontAtlasRectId menu_cursor_sprite_=ImFontAtlasRectId_Invalid;
+  ImFontAtlasRectId menu_cursor_albedo_sprite_=ImFontAtlasRectId_Invalid;
+  std::unique_ptr<ben10::MenuCursor> menu_cursor_;
   std::unique_ptr<Ben10CinematicSubtitles> cinematic_subtitles_;
   std::jthread capture_worker_;
 };
