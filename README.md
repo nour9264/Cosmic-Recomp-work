@@ -73,44 +73,24 @@ More details: [update notes](docs/ALPHA6_UPDATE.md) · [voice repair](docs/ULTIM
 
 More details: [performance report](docs/PERFORMANCE_ALPHA5.md) · [Alpha 5 release notes](docs/ALPHA5_RELEASE.md)
 
-## Upstream Alpha 4 reference
+## Alpha 4 - Stability & Performance (upstream)
 
-Experimental Windows 10/11 x64 native port of **Ben 10 Ultimate Alien: Cosmic Destruction** (Xbox 360), using ReXGlue v0.10.0 and Direct3D 12.
+Cosmic Recomp is an experimental Windows 10/11 x64 native port of **Ben 10 Ultimate Alien: Cosmic Destruction** (Xbox 360), built on ReXGlue (0.10.0 series) and Direct3D 12. **Bring your own copy:** no ISO, game files, generated game code or saves are distributed.
 
-**Alpha software. Camera/scenery flicker above 30 FPS is still present and is the next priority.**
+**Upstream Alpha 4:** [Download](https://github.com/ExtremestoneGG/Cosmic-Recompi/releases/tag/v0.4.0-alpha.4).
 
-**Bring your own supported copy.** No ISO, XEX, original assets, generated game source or personal saves are distributed.
+- **Installer and launcher:** one portable EXE. Select your ISO, then **Prepare game**. The launcher has Play, Settings and Quit.
+- **Video options:** output resolution, frame limit, display mode and Show FPS, in-game and in the launcher.
+- **All Aliens:** every ordinary form, including Rath, available from the start. Off by default.
+- **Hero Time:** press **L3 / F** for the matching Ultimate for up to 60 seconds. Off by default; enable it under Options → Gameplay.
+- **Fixes:** missing All Aliens animations, a lever crash, and a crash at a boss-to-story transition.
+- **Wipe Data:** archives this game's profile to `game-data/save-backups` and returns to the launcher.
 
-[Upstream Alpha 4 download](https://github.com/ExtremestoneGG/Cosmic-Recompi/releases/tag/v0.4.0-alpha.4) · [User guide](USER_GUIDE.md) · [Build guide](BUILD.md) · [Contributor / coding-agent runbook](docs/CONTRIBUTOR_BUILD_RUNBOOK.md) · [Validation](VALIDATION.json) · [Sources](SOURCES.md)
-
-Latest update: [animation and lever crash fixes](RELEASE_NOTES.md), including a manual phase-1 lever test. Rath upgrades with All Aliens disabled remain under investigation.
-
-Latest update: **boss-transition stability, proportional Hero Time and accumulated native-quality optimizations**. [Details](RELEASE_NOTES.md).
-
-**Contributors and coding agents:** start with the [current-source handoff](docs/AI_HANDOFF.md)
-and [build runbook](docs/CONTRIBUTOR_BUILD_RUNBOOK.md). All Aliens and Hero Time
-are authored source features in this repository. After the patched SDK setup,
-`tools/build_development.ps1` builds and stages the current development app;
-it does not download an older release runtime. Full clean-machine reproduction
-remains unverified.
-
-## Alpha v0.4.0-alpha.4 — stability and performance
-
-- One portable EXE: select your ISO, wait for acceptance, then **Prepare game**. Import uses a precompiled native runtime; it does not compile C++ on the player's PC.
-- Separate launcher with **Play, Settings, Quit**. Play closes the frontend before gameplay. There is no automatic-start checkbox.
-- Original in-game **Options → Video** menus: output resolution, 30/60/Unlimited frame limits, display mode and **Show FPS → On/Off**. Show FPS controls both the counter and frame-time graph. Launcher Settings edits the same values.
-- Live output size in windowed mode and supported exclusive fullscreen modes; borderless uses the desktop's size. These are presentation settings, not a claim of increased internal rendering resolution. Native 1280×720 remains the minimum.
-- Quit to launcher, early startup diagnostics, save-folder information, desktop shortcut creation, and user-supplied text-translation import.
-- Repaired missing animation-stream resources for All Aliens. Eleven ordinary forms, including Rath, transformed in the recorded Paris scene. This is scene-level validation, not full campaign coverage.
-- **Gameplay → Wipe Data** asks for confirmation, closes the game, archives this title's profile data, and returns to the launcher. Native video settings remain intact. Backups are in `game-data/save-backups`.
-
-All Aliens starts **OFF**. Hold LT and tap RT to change pages; RT abilities are suppressed while LT is held. Normal Rath progression and the original cheat are preserved. All Aliens makes Rath available without changing the profile unlock. Four Arms is not included.
-
-Hero Time starts **OFF**. Enable it under **Options → Gameplay → Extras**. Use a compatible normal alien, then **L3 / F** for its corresponding Ultimate. It lasts up to 60 seconds, followed by proportional recharge as Ben (time used / 3, maximum 20 seconds). See [Hero Time details](RELEASE_NOTES.md) for tested scope and known issues.
+More details: [release notes](RELEASE_NOTES.md) · [user guide](USER_GUIDE.md) · [build guide](BUILD.md) · [contributor runbook](docs/CONTRIBUTOR_BUILD_RUNBOOK.md) · [sources](SOURCES.md)
 
 ## Keyboard and controllers
 
-Controllers are supported natively through the SDK SDL backend, including XInput-compatible controllers. Prompts retain Xbox button names. Contextual actions follow the original game.
+Controllers are supported natively through the SDK SDL backend, including XInput-compatible controllers. Button icons can be set to Xbox, PlayStation, Keyboard and Mouse, or Auto under Options → Video. Contextual actions follow the original game.
 
 | Keyboard | Xbox input / purpose |
 | --- | --- |
