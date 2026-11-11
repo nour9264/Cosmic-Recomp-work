@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 
 # Troubleshooting
 
@@ -37,17 +34,3 @@ Return to the 30 FPS cap. 60 is an optional limit, not a validated whole-game ta
 ## What to attach to a report
 
 Release tag, CPU/GPU/driver, scene/checkpoint, exact steps, cap/resolution and whether an external limiter was active. Review and redact logs before sharing. Never attach ISO, XEX, original resources, account data or personal saves.
-
----
-
-<a id="portugues"></a>
-
-# Solução de problemas
-
-Extraia o pacote completo em uma pasta gravável. O launcher precisa de OpenGL 3.0; o jogo usa Direct3D 12, CPU AVX2 e os componentes do pacote. Não misture DLLs de builds diferentes.
-
-Uma ISO recusada precisa corresponder ao hash suportado; renomear o arquivo não muda a edição. Não remova a verificação. Importações incompletas são preservadas, sem serem marcadas como prontas. Em falha de disco externo, aguarde o reconhecimento pelo Windows antes de reutilizar a instalação; o programa público não altera dispositivos USB nem escolhe outro disco sozinho.
-
-Se o save sumir, confira a instalação selecionada e o caminho mostrado em Settings. Trocar de pasta não move o save anterior. Preserve `user` ao atualizar e feche o jogo antes de restaurar backups.
-
-Se 60 FPS ficar instável, volte a 30 e relate cena, driver, limite, resolução e frame time. Não compare diretamente presents repetidos com o contador de quadros do jogo. Revise logs antes de compartilhar; não envie ISO, XEX, recursos originais, dados de conta ou saves pessoais.

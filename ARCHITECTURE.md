@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 
 # Architecture and validation
 
@@ -46,62 +43,6 @@ The overlay counts game submissions through `VdSwap`, separately from repeated h
 
 Not verified: the entire campaign, every save/checkpoint, all GPUs/drivers, a clean-machine full native build or stable 60 FPS. Original Options video integration has been exercised with automated controller replay; see TESTING.md for its exact scope.
 
----
-
-<a id="portugues"></a>
-
-# Como o port funciona
-
-## Da ISO ao jogo
-
-O launcher C# reconhece a partição XDVDFS e lê o catálogo da ISO sem montá-la nem alterá-la. Antes de extrair, compara o hash do `default.xex` com a edição para a qual o executável nativo foi gerado. Verifica limites de leitura, nomes de dispositivos Windows, caminhos inválidos e ciclos de diretórios.
-
-A extração acontece numa pasta nova `installation/import-<id>`. Somente quando termina ela passa a ser `installation/game`. Cancelamentos deixam a pasta parcial identificada; saves existentes não são removidos. A primeira versão não retoma uma extração parcial: uma nova tentativa usa outra pasta. Pastas parciais podem ocupar espaço e devem ser tratadas pelo usuário quando nenhum processo as estiver utilizando.
-
-O ZIP fornece um executável Windows já compilado. O importador não converte a ISO inteira em C++ durante a instalação. A geração estática das funções PowerPC acontece durante o desenvolvimento com `rexglue codegen`, sobre a cópia local do desenvolvedor. Essas fontes geradas não são publicadas no Git.
-
-## Frontend separado
-
-O frontend nativo usa Dear ImGui, SDL3 e OpenGL, seguindo o modelo visual do Full Emerald. Ele encerra antes de o jogo iniciar; uma ponte C# independente aguarda o encerramento e acompanha a execução. O início direto nem inicializa SDL. Um evento exclusivo por execução permite voltar ao launcher sem repetir o início direto.
-
-O importador deriva os dois arquivos de menu da cópia do usuário e preserva os originais. QUIT TO LAUNCHER fica separado de QUIT; VIDEO fica em OPTIONS. O painel de vídeo usa o renderizador de interface do SDK e restaura o menu original ao fechar. Nenhum bytecode original é distribuído. As preferências ficam em `user/pc-video.ini`: resolução no próximo início e limite de 30/60 FPS, com 60 experimental e ilimitado desativado.
-
-## CPU, GPU e serviços
-
-As funções PowerPC recompiladas tornam-se código de CPU do Windows. Chamadas a serviços Xbox e comandos da GPU continuam precisando de implementações equivalentes: o kernel, áudio, controle e backend Direct3D 12 vêm do ReXGlue. O projeto não escreveu outro renderizador ou kernel.
-
-Os shaders e recursos da GPU Xbox são tratados pelo backend do SDK. Código de CPU nativo não significa que comandos da GPU Xbox possam ser enviados diretamente a qualquer GPU de PC.
-
-## Configuração portátil
-
-`BEN10_PORTABLE_ROOT` identifica uma instalação independente da pasta de desenvolvimento. Ela contém:
-
-| Pasta | Conteúdo | Distribuir? |
-| --- | --- | --- |
-| `game` | Recursos importados da ISO | Não |
-| `user` | Saves, perfil e estado local | Não |
-| `cache` | Shaders e caches gerados | Não |
-| `logs` | Diagnósticos locais | Somente após revisão pelo usuário |
-| `metadata` | Metadados opcionais locais | Não incluir recursos originais |
-
-O launcher fornece os ajustes gráficos acumulados e o limite selecionado de 30/60 FPS, com padrão de 30. O manifesto SHA-256 detecta cópias incompletas/alteradas; não é assinatura digital nem proteção contra modificações deliberadas.
-
-## FPS e cadência
-
-O overlay conta submissões do jogo no caminho `VdSwap`, separadamente das reapresentações da janela. Contadores externos podem contar apresentações repetidas e exibir um número maior sem a mesma quantidade de novos quadros do jogo.
-
-A build de testes usa a cadência interna de 30 Hz que melhorou o movimento da câmera no teste manual. Isso não prova que toda animação/simulação funcione corretamente a 60 Hz. Por esse motivo o modo ilimitado fica indisponível e as opções de 30/60 FPS dentro de Options serão uma atualização separada.
-
-## O que foi confirmado
-
-- Leitura da ISO suportada: 1.352 arquivos, 5.435.433.670 bytes de recursos.
-- Extração completa numa instalação nova, com nomes/tamanhos conferidos contra o catálogo e hash do XEX validado. Não foi feita uma segunda leitura de hash de todos os 5,4 GB.
-- Inicialização do executável portátil e reconhecimento do controle XInput.
-- Save pelo menu do jogo, encerramento, nova abertura e carregamento por Continuar, confirmado pelo jogador no checkpoint testado.
-- Nove testes sintéticos do parser: catálogo válido, imagem truncada, travessia de caminhos, nome reservado, ponto final, endereço fora da imagem, ciclo de árvore, assinatura final inválida e XEX de edição não suportada.
-
-Não foram confirmados: campanha completa, todas as GPUs/drivers, todos os checkpoints, compilação em máquina limpa ou desempenho estável a 60 FPS. A integração de vídeo ao OPTIONS original passou pela reprodução automática descrita em TESTING.md.
-
 ## Animation streams and reset lifecycle
 
 All Aliens merges the ordinary forms' resident animation clips into level stream banks. Resident channel indices are converted to inline payload offsets; physical channel-record order, duplicate records and original level clips are preserved. The C# installer and independent Python converter produce identical banks in the fixture tests. Data is derived locally from the user's copy and is never distributed.
@@ -109,5 +50,3 @@ All Aliens merges the ordinary forms' resident animation clips into level stream
 The Gameplay input pre-handler normally consumes A to confirm the entire settings screen. Only A on the new Wipe Data row bypasses that interceptor and reaches the ordinary option callback. Original checkbox confirmation and B cancellation retain their original handler. The confirmation raises an owned reset event; the bridge waits for process exit and the installation lock before archiving this title's profile directories. No save directory is deleted.
 
 The SDL extension is compiled inside the SDK runtime to use its existing SDL instance. It configures output size and exclusive display modes; the SDK presenter still owns resizing and presentation. No renderer/kernel replacement is introduced. The matching native-menu ABI is 7.
-
-Português: animações são convertidas dos próprios dados locais do usuário, preservando clipes originais e ordem física dos canais. Wipe Data usa a confirmação original e só arquiva os perfis depois do encerramento. A extensão de apresentação usa a janela SDL existente do SDK; não cria outro renderizador.

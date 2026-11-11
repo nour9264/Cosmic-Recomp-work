@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 # Hero Time — Alpha 4
 
 Enable **Options → Gameplay → Extras → Hero Time** (OFF by default). First
@@ -19,22 +16,3 @@ return. Authored VM tests cover readiness, eligible pairs, lifecycle, resource
 accounting and interruption. Every ability and the full campaign are unverified.
 Ultimate Big Chill's geometric wing border remains open; so does camera flicker
 above 30 FPS. This mode does not certify stable 60 FPS. No character assets ship.
-
----
-<a id="portugues"></a>
-# Hero Time — Alpha 4
-
-Ative em **Options → Gameplay → Extras → Hero Time** (desligado por padrão).
-Transforme-se primeiro no alien normal compatível e use **L3 / F** para o Supremo
-correspondente. Ben não vira Supremo diretamente. Gigante não participa.
-
-O Supremo dura até **60 segundos**. Use o mesmo botão para voltar antes do fim.
-A recarga como Ben é **tempo usado / 3**, limitada a **20 segundos**: usar 30
-segundos resulta em 10 segundos de recarga. A barra preserva a fração proporcional
-na saída antecipada. A transformação usa o brilho verde original. Pausar o jogo
-não consome o temporizador.
-
-Golpes, barra, brilho e recarga proporcional foram confirmados manualmente.
-Os testes automáticos de VM cobrem a lógica, sem certificar todas as habilidades
-ou a campanha. O contorno nas asas do Friagem Supremo e o flicker acima de 30 FPS
-continuam pendentes. Nenhum arquivo original de personagem é distribuído.

@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 # Alpha validation scope
 
 `VALIDATION.json` records the release gate. It separates unit/fixture evidence, real native-process checks and earlier user confirmation. It does not declare full game compatibility.
@@ -22,13 +19,3 @@ The ISO parser, installation/save-preservation and menu transformation suites al
 No new FPS gain, stable 60 FPS, full campaign completion or fix for the earlier first-boss death crash is claimed. Flicker/judder above 30 FPS is the next priority, investigated with the frame limit disabled. Repeated host presents and an FPS average do not prove unique smooth game frames.
 
 Local probes use recorded controller input and mute game audio. Their original assets, saves, raw logs and screenshots are not distributed. The public validation summary contains no personal paths or account data.
-
----
-<a id="portugues"></a>
-# Escopo dos testes Alpha
-
-O arquivo VALIDATION.json separa testes de formato/instalação, execução real e confirmação anterior do usuário. Foram verificadas as onze formas na cena de Paris, troca de resolução de saída no mesmo processo, modos de tela no monitor de teste, Show FPS, cancelar/confirmar Wipe Data, backup após encerramento e retorno ao launcher.
-
-Os seis arquivos de progresso copiados mantiveram seus hashes no backup; os saves originais ficaram intactos. O teste de Save/Continue confirmado pelo usuário é uma evidência anterior e separada. As verificações de SDK comparam o relink e a unidade SDL original antes da extensão.
-
-Isso não comprova a campanha completa, todas as habilidades, cada GPU/driver ou o crash antigo no primeiro chefe. Não há ganho novo de FPS nem 60 FPS estáveis anunciados. A próxima prioridade é a tremedeira/flicker acima de 30 FPS, com limite desligado. Nenhum dado original, log pessoal ou save é publicado.

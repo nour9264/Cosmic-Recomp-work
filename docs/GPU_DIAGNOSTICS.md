@@ -99,16 +99,6 @@ SDK. Run the archive include relocation helper; do not apply the patch twice.
 Build the bridge with `--hero-time --gpu-diagnostics`. Normal builds omit the
 diagnostic flag and do not enable the collectors.
 
-## PortuguÃªs
-
-DiagnÃ³stico experimental, sem ganho confirmado. Os dados apontaram custo alto
-na CPU grÃ¡fica; agora medimos cada etapa para localizar a causa. Instale
-separadamente, teste 30 segundos na mesma cena lenta em 720p e envie a pasta
-`game-data/logs`, incluindo `cpu-draw-phases-*.jsonl` e `gpu-timing-*.jsonl`.
-Se houver arquivo de perfil antigo, use `measure-phases`. A candidata de
-agrupamento de vÃ©rtices foi rejeitada localmente e nÃ£o faz parte deste pacote.
-NÃ£o hÃ¡ reduÃ§Ã£o de qualidade ou alteraÃ§Ã£o dos comandos grÃ¡ficos.
-
 ## Follow-up: apparent 15 FPS cadence lock
 
 GPU test 5 adds passive limiter and guest-vblank attribution. See

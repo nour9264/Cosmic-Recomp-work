@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 # Cosmic Recomp
 
 ## Alpha 8.2 — Mouse Menus, Music Integration & Modern Button Icons
@@ -236,54 +233,3 @@ Save/Continue was manually confirmed in an earlier test. No saves are supplied. 
 Stable 60 FPS and camera/scenery flicker above 30 FPS remain open. Full campaign compatibility, extended combat/abilities and the earlier first-boss death regression remain unverified. Returning from the main menu to Press Start with B is pending. Retained performance changes and the limits of the fixed-scene measurement are documented in [release notes](RELEASE_NOTES.md). Unsupported exclusive resolutions are rejected and logged.
 
 ReXGlue supplies the kernel, GPU translation and audio. This project does not replace them with a new renderer or kernel. [SOURCES.md](SOURCES.md), [THIRD_PARTY.md](THIRD_PARTY.md), [PROVENANCE.json](PROVENANCE.json) and `LICENSES/` record sources, revisions, changes and licenses. Complete corresponding SDK sources accompany the release. A full clean-machine rebuild remains unverified.
-
----
-<a id="portugues"></a>
-# Português (Brasil)
-
-## Alpha 7 - Four Arms, modo Albedo e melhorias no launcher
-
-**Alpha 7 da comunidade:** [Baixe o instalador para Windows e veja as notas da versão](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.7).
-
-- **Four Arms:** forma jogável separada de Rath, com espaço no All Aliens, na roda de seleção do R3 e na roda de melhorias da versão local. Use o código `classic` para desbloqueá-lo.
-- **Importação opcional do PS3:** a Alpha 7 usa a pasta extraída `PS3_GAME` da edição europeia (`BLES01110`) para o Four Arms. A ISO do Xbox 360 continua sendo a base do jogo. Use **Import Four Arms** na aba Setup do launcher.
-- **Modo Albedo:** opção em Extras que altera o visual do personagem, os detalhes do Omnitrix, os elementos da interface e o clarão da transformação, que fica branco e vermelho.
-- **Launcher e inicialização:** interface e tela de configurações redesenhadas, opção de pular a introdução e correção do comando Quit to Launcher no menu de pausa.
-- **Omnitrix Supremo:** restaura os detalhes vermelhos e amarelos da interface durante as transformações Supremas.
-- **Desempenho:** mantém a correção de cadência da Alpha 5, testada localmente a 30 e 60 FPS.
-
-Port nativo experimental para Windows 10/11 x64 de **Ben 10 Ultimate Alien: Cosmic Destruction**, baseado no ReXGlue v0.10.0 e Direct3D 12. **Você precisa fornecer sua própria cópia compatível.** Nenhum dado original, código gerado do jogo ou save pessoal é distribuído.
-
-Esta versão corrige recursos de animação ausentes no All Aliens e acrescenta opções nos menus do próprio jogo: resolução de saída, 30/60/Unlimited, modo de tela e **Show FPS**, que mostra ou esconde juntos o contador e o gráfico de frametime. O launcher controla os mesmos valores. A resolução de saída muda sem reiniciar em janela e nos modos exclusivos compatíveis; borderless acompanha o desktop. Isso não significa aumento da resolução interna.
-
-O All Aliens começa desligado. Segure LT e toque RT para trocar páginas; habilidades por RT ficam bloqueadas enquanto LT estiver segurado. As onze formas comuns, incluindo Rath, foram verificadas na cena de Paris. O progresso normal e o cheat do Rath são preservados. O Four Arms faz parte da versão local da Alpha 7 descrita acima.
-
-Wipe Data pede confirmação, fecha o jogo, guarda os dados deste título em `game-data/save-backups` e retorna ao launcher. As configurações nativas de vídeo são preservadas. Mantenha `game-data/user` ao atualizar. Logs ficam em `game-data/logs`.
-
-A meta de 60 FPS estáveis e a tremedeira acima de 30 FPS continuam pendentes. A campanha completa e o crash antigo ao morrer no primeiro chefe ainda precisam de verificação. B para voltar ao Press Start também está pendente. As otimizações acumuladas e os limites da medição estão nas notas desta Alpha. Consulte as [notas](RELEASE_NOTES.md), [testes](TESTING.md) e [origens](SOURCES.md).
-
-Hero Time agora inclui brilho verde e recarga proporcional ao uso, limitada a 20 segundos. A correção da transição dos Vreedle e as otimizações acumuladas estão nas [notas da Alpha 4](RELEASE_NOTES.md).
-
-## Teclado e controle
-
-Controles são aceitos nativamente via SDL, incluindo modelos compatíveis com XInput.
-Os avisos do jogo continuam mostrando os botões do Xbox.
-
-| Tecla | Ação / botão Xbox |
-| --- | --- |
-| WASD | Movimento |
-| Setas | Câmera |
-| Espaço ou ponto e vírgula | A: confirmar / pular |
-| Backspace ou apóstrofo | B: voltar / ação original |
-| L / P | X / Y |
-| Q ou I | LT: seleção de aliens |
-| E ou O | RT: habilidades / próxima página com LT segurado e All Aliens ligado |
-| 1 / 3 | LB / RB |
-| F / K | Clique do analógico esquerdo / direito |
-| Shift + setas | Direcional |
-| Enter ou X | Start / pausa |
-| Tab ou Z | Back / Select |
-
-Com All Aliens ligado, segure Q e toque E para trocar páginas. Mouse desativado
-por padrão. Mapeamento conferido no código e configuração; nem toda ação
-contextual foi testada em gameplay.

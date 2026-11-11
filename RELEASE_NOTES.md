@@ -1,5 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
 # Cosmic Recomp Alpha 8.1
 
 - Toggle **Play as Albedo** in the final fight and resume to swap Way Big appearances. Green beams follow Ben and red beams follow Evil Way Big.
@@ -8,7 +6,6 @@
 
 The local test build was confirmed in-game. Installer testing is pending.
 
-<a id="english"></a>
 # Cosmic Recomp Alpha 0.4.0-alpha.4 — stability and accumulated optimizations
 
 This is an **Alpha update**, not a completed port. Bring your own supported Xbox
@@ -57,34 +54,3 @@ the separate launcher remain available. Back up your user folder before updating
 Validation separates automated recipe/VM/installer checks from manual encounter
 and Hero Time feedback. See VALIDATION.json and docs/ALPHA4.md. A clean-machine
 rebuild of the entire SDK and consumer has not been verified.
-
----
-<a id="portugues"></a>
-# Cosmic Recomp Alpha 0.4.0-alpha.4 — estabilidade e otimizações acumuladas
-
-Versão **Alpha**. É necessário fornecer sua própria cópia compatível de Xbox 360.
-O importador prepara os dados locais usando o runtime nativo distribuído; não
-compila C++ na máquina do jogador.
-
-- Pool DB File Heap ampliado de 64 para **96 MiB**, com ambas as listas de
-  callbacks e filas auxiliares ampliadas para **64 entradas**. Corrige a falta de
-  armas/efeitos dos Vreedle e o crash na transição após a batalha com All Aliens e
-  Hero Time. Essa luta foi retestada manualmente; a campanha inteira não foi validada.
-- **Hero Time:** brilho verde original, até 60 segundos como Supremo e recarga
-  proporcional ao uso, limitada a **20 segundos**. Usar 30 segundos resulta em
-  10 segundos de recarga. Saída antecipada e barra proporcional foram confirmadas.
-- Otimizações acumuladas de resolves de profundidade, cópias RGBA8 compatíveis
-  para texturas existentes e espera da CPU por progresso da GPU, preservando
-  resolução nativa, verificações e caminhos de fallback do SDK.
-- Contador com RAM do processo e memória de GPU via DXGI. Memória compartilhada
-  de uma GPU integrada não equivale a VRAM dedicada adicional.
-- Fontes correspondentes completos do SDK, diff consolidado e receitas de
-  integração após codegen. Nenhum código gerado ou arquivo original do jogo.
-
-A observação de **+2,52%** é restrita a uma cena de desenvolvimento comparada ao
-registro equivalente; não representa ganho garantido entre versões públicas.
-**30 FPS segue como padrão. O flicker acima de 30 FPS ainda não está corrigido.**
-Transparência das asas do Friagem Supremo e upgrades do Rath com All Aliens
-desligado continuam pendentes. Não inclui framegen, FSR ou sala privada de testes.
-Preserve sua pasta de usuário ao atualizar. Consulte VALIDATION.json para separar
-testes automáticos, confirmações manuais e pontos ainda não verificados.

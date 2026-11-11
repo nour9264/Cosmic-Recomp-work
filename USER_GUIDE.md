@@ -1,6 +1,3 @@
-[English](#english) | [Português (Brasil)](#portugues)
-
-<a id="english"></a>
 # User guide
 
 ## Prepare your copy
@@ -53,21 +50,3 @@ Setup failures: `CosmicRecomp/logs/setup.log`. Game/startup failures: the instal
 ## Optional translation tables
 
 After import, Settings → Add translation patch accepts a user-supplied `global/scripts/xbx_us.txt` table. The native menu labels are merged into the table; original backups are retained. This is translation-table support, not a universal binary/XEX patch engine. The separately distributed `X360-Ben-10-Ultimate-Alien-Cosmic-Destruction-USA-Traducao-PT-BR-V1.0-XEX-BRASIL` patch is the local compatibility reference; obtain it from its authors. No patch files are hosted here. Compatibility with every revision is not guaranteed.
-
----
-<a id="portugues"></a>
-# Guia em português
-
-Execute o instalador e escolha a pasta de instalação em qualquer disco gravável. Para atualizar, escolha a pasta CosmicRecomp existente. Em Settings → Select ISO, selecione sua cópia compatível. Depois da aceitação, clique em Prepare game e aguarde o progresso. O programa importa os dados para um runtime já compilado; não compila C++ no PC do usuário nem altera a ISO. Após preparar, clique em Play. O launcher fecha e o jogo abre em processo separado. Um atalho é criado após a importação.
-
-As configurações de vídeo ficam tanto no launcher quanto no menu original Options → Video. Há 720p/1080p/1440p/4K e 30/60/Unlimited FPS. O padrão é 30, com limite interno. 60/Unlimited são experimentais e podem apresentar problemas de cadência; a resolução de saída muda sem reiniciar em janela e nos modos exclusivos compatíveis. Borderless acompanha o desktop. Show FPS controla juntos contador e frametime. O contador mostra submissões de quadros do jogo, sem garantir imagens únicas no monitor.
-
-Gameplay → All Aliens começa desligado. Segure LT e toque RT para alternar 4 + 4 + 3 formas. Enquanto LT estiver pressionado, RT não aciona as habilidades. Soltar LT restaura os quatro slots originais. Rath mantém o progresso/cheat normal e também fica disponível no All Aliens. O crash de recurso de animação foi corrigido na cena testada. Quatro Braços não está incluído. As transformações e o ciclo de recursos do All Aliens ainda são experimentais.
-
-Controles são aceitos nativamente via SDL, incluindo XInput. Teclado: WASD move; setas = câmera; Espaço = A; Backspace = B; L/P = X/Y; Q/I = LT; E/O = RT; 1/3 = LB/RB; F/K = clique dos analógicos; Shift + setas = direcional; Enter/X = Start; Tab/Z = Back. Com All Aliens ligado, segure Q e toque E para trocar a página. Mouse não vem ativado. Mapeamento conferido no código/configuração; nem toda ação contextual foi testada.
-
-No pacote portátil, preserve `CosmicRecomp/game-data/user` ao atualizar. Settings mostra a pasta real e permite abri-la. Feche o jogo antes de copiar os saves. Para resetar sem perder a cópia, renomeie a pasta user para user-backup. Quit to launcher não substitui o save/checkpoint do próprio jogo. Wipe Data pede confirmação e arquiva os perfis deste título em save-backups após o jogo fechar; as configurações nativas de vídeo são preservadas.
-
-Logs da preparação ficam em `CosmicRecomp/logs`. Logs do jogo e da tentativa de iniciá-lo ficam em `CosmicRecomp/game-data/logs`. Envie launcher.log e startup-output.log mesmo quando runtime.log estiver vazio. Informe a ação, a fase, se All Aliens estava ligado e a versão do Windows/GPU. Remova dados pessoais antes de publicar os logs.
-
-Settings → Add translation patch aceita a tabela `global/scripts/xbx_us.txt` fornecida pelo usuário. Não é um instalador universal de patches binários ou XEX. A tradução PT-BR XEX-BRASIL foi usada como referência local; obtenha o patch com seus autores. Nenhum arquivo da tradução é distribuído pelo projeto. Consulte as limitações em RELEASE_NOTES.md.
