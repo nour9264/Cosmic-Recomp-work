@@ -228,8 +228,6 @@ With All Aliens ON, hold Q and tap E to cycle pages. The mouse turns the camera 
 
 Save/Continue was manually confirmed in an earlier test. No saves are supplied. Use a separate folder for a new test release and preserve your existing user folder before migration.
 
-## Known limits
-
-Stable 60 FPS and camera/scenery flicker above 30 FPS remain open. Full campaign compatibility, extended combat/abilities and the earlier first-boss death regression remain unverified. Returning from the main menu to Press Start with B is pending. Retained performance changes and the limits of the fixed-scene measurement are documented in [release notes](RELEASE_NOTES.md). Unsupported exclusive resolutions are rejected and logged.
+## Sources and licenses
 
 ReXGlue supplies the kernel, GPU translation and audio. This project does not replace them with a new renderer or kernel. [SOURCES.md](SOURCES.md), [THIRD_PARTY.md](THIRD_PARTY.md), [PROVENANCE.json](PROVENANCE.json) and `LICENSES/` record sources, revisions, changes and licenses. Complete corresponding SDK sources accompany the release. A full clean-machine rebuild remains unverified.
