@@ -58,44 +58,11 @@ For an Alpha 8.1 build, compile both launcher bridges with `--hero-time --gpu-di
 ## Alpha 6 - Ultimate Voices & Discord Rich Presence
 
 **Community Alpha 6:** [Download the installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.6).
-The previous [Alpha 5 release](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5) remains available.
 
-- **Ultimate transformation voice lines:** repaired Hero Time name callouts for
-  all five supported Ultimates using their original recordings. The integration
-  aligns voice-bank indices and event resolvers, adds a missing callout after
-  confirmed activation, and avoids duplicating existing playvo requests.
-- **Discord Rich Presence:** game cover, a small original Level Select preview,
-  current level name and elapsed session time. Mission changes update the level
-  without resetting the timer; Discord being unavailable does not block play.
+- **Ultimate voice lines:** restored the Hero Time name callouts for all five Ultimates using their original recordings.
+- **Discord Rich Presence:** shows the game cover, a Level Select preview, the current level and session time. Play continues normally without Discord.
 
-Local player testing reported successful results. Original sound preservation,
-voice-event mapping, duplicate suppression, Discord IPC and all eight level-image
-mappings passed focused checks. Full campaign and clean-machine validation remain
-open. The tested Alpha 5 performance configuration is retained.
-
-[Alpha 6 update notes](docs/ALPHA6_UPDATE.md) ·
-[Voice repair details](docs/ULTIMATE_VOICE_DIAGNOSTICS.md) ·
-[Discord integration and original preview mappings](docs/DISCORD_RICH_PRESENCE.md)
-
-For this combined configuration, build the matching current native game and use:
-
-```powershell
-python tools/build_release_bridge.py --hero-time --gpu-diagnostics --performance-alpha5 --ultimate-voices --discord-presence
-```
-
-The feature flags are explicit; ordinary unqualified bridge builds retain their
-previous defaults. Rebuilding only the bridge cannot add Discord's new native
-mission callbacks. Players do not need a Discord Developer Portal application.
-Original recordings and extracted preview PNGs remain outside Git.
-
-
-**Community work — Alpha 5:** see the
-[local performance investigation and reproduction steps](docs/PERFORMANCE_ALPHA5.md).
-The community Alpha 5 bridge automatically selects the tested performance path.
-See the [Alpha 5 release notes](docs/ALPHA5_RELEASE.md). The upstream Alpha 4 reference below is preserved.
-
-[Community Releases](https://github.com/nour9264/Cosmic-Recomp-work/releases) ·
-[Performance report](docs/PERFORMANCE_ALPHA5.md)
+More details: [update notes](docs/ALPHA6_UPDATE.md) · [voice repair](docs/ULTIMATE_VOICE_DIAGNOSTICS.md) · [Discord integration](docs/DISCORD_RICH_PRESENCE.md) · [Alpha 5 performance work](docs/PERFORMANCE_ALPHA5.md) · [all releases](https://github.com/nour9264/Cosmic-Recomp-work/releases)
 
 ## Community performance update — Alpha 5
 
