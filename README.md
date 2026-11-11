@@ -64,71 +64,14 @@ For an Alpha 8.1 build, compile both launcher bridges with `--hero-time --gpu-di
 
 More details: [update notes](docs/ALPHA6_UPDATE.md) · [voice repair](docs/ULTIMATE_VOICE_DIAGNOSTICS.md) · [Discord integration](docs/DISCORD_RICH_PRESENCE.md) · [Alpha 5 performance work](docs/PERFORMANCE_ALPHA5.md) · [all releases](https://github.com/nour9264/Cosmic-Recomp-work/releases)
 
-## Community performance update — Alpha 5
+## Alpha 5 - Performance & Installer
 
-Local testing identified a major CPU-side upload-reuse bottleneck on an
-NVIDIA GeForce RTX 4060 Laptop GPU. The affected area previously ran at about
-15 game FPS. `UploadAudit::Observe`, which compares uploaded data against a
-shadow cache, consumed approximately 49–54 ms per frame in the slow capture.
+**Community Alpha 5:** [Download the installer and read the release notes](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5).
 
-The tested candidate uses the existing full-upload path without that comparison.
-The user confirmed recovery to 30 FPS and smooth operation after selecting
-60 FPS. The latest six telemetry windows recorded **59.97–60.03 game FPS**, with
-the 60 FPS cap confirmed by cadence logs. Graphics-worker CPU wall time was
-approximately 3–5.4 ms per frame in those samples.
+- **Performance:** fixed a CPU-side slowdown that dropped a heavy area to about 15 FPS. It now holds 30 FPS, and 60 FPS where the hardware allows.
+- **Single installer:** one EXE with the launcher, native runtime and dependencies. It contains no game files; you prepare the game from your own ISO.
 
-This is a result from the affected area, not a campaign-wide guarantee or a
-controlled percentage benchmark. The player also reports that the previous screen
-shaking disappeared in the test. A separate flicker-specific fix, other hardware
-and comprehensive visual correctness remain unverified. See the performance report for
-the measurements, source changes and validation limits.
-
-Alpha 5 selects `measure-no-reuse` automatically, including when an old diagnostic
-profile file exists. Build it with `--hero-time --gpu-diagnostics --performance-alpha5`.
-The ordinary bridge without this Alpha 5 flag retains its previous defaults.
-
-## Community EXE release
-
-**Cosmic Recomp — Alpha 5** is a community release distributed as one installer:
-
-```text
-CosmicRecomp-Alpha5-win64.exe
-```
-
-The player flow is:
-
-1. Download and run the EXE from this repository's Releases page.
-2. Choose an installation folder. The installer unpacks its bundled runtime
-   into `app/<package-hash>/` and opens the launcher. The chosen folder also
-   receives `game-data/`, `logs/` and `temp/`; these are created locally during
-   setup and use, not copied from the maintainer's personal installation.
-3. In the launcher, choose **Select ISO** and select your own supported Xbox 360
-   copy. Wait for validation, then choose **Prepare game**.
-4. Select **Play**. Later launches use the installed launcher or its shortcut;
-   the same prepared installation does not require importing the ISO again.
-
-The EXE contains the launcher, bridge, precompiled native game runtime,
-dependencies and license notices. It does not contain an ISO, original game
-assets, personal saves, logs, caches or personal installation paths. Prepare
-imports the player's assets; it does not compile C++ on the player's computer.
-
-### Manual publication while Actions is unavailable
-
-Maintainers build locally and use the existing allowlisted
-`tools/build_portable_distribution.py` packager. Publication requires a coherent
-release stage, the tested performance setting, matching runtime hashes,
-source/license information, and an installer test in a separate folder.
-Do not package the working test installation or upload the bare launcher alone.
-
-After those checks, the repository owner can open **Releases → Draft a new
-release**, choose the tested source commit and a version tag, enter the English
-release notes, and attach the verified installer EXE and its SHA-256 checksum.
-Mark the initial community Alpha as a pre-release and identify its upstream base.
-The repository's automatic source ZIP is source code, not the playable installer.
-
-Release artifacts and validation details are listed on the
-[Alpha 5 release page](https://github.com/nour9264/Cosmic-Recomp-work/releases/tag/v0.4.0-alpha.5).
-See the attached validation file for packaging checks and gameplay limits.
+More details: [performance report](docs/PERFORMANCE_ALPHA5.md) · [Alpha 5 release notes](docs/ALPHA5_RELEASE.md)
 
 ## Upstream Alpha 4 reference
 
