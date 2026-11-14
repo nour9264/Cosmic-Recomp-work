@@ -1,3 +1,12 @@
+# Cosmic Recomp Alpha 8.5
+
+- **Alien Force aliens:** Chromastone, Jetray and Goop on All Aliens page 4. Import them from your own *Vilgax Attacks* Xbox 360 folder with **Setup → Import Alien Force aliens**.
+- **Ten languages** in the launcher and the game, with Arabic, Russian and Japanese text drawn by an overlay. Translations ship with the game.
+- **Ultimate balance and timer**, the Ultimatrix HUD prongs, **Field of View** and song titles in any script.
+- **Fix:** landing a Big Chill glide no longer crashes.
+
+**Known issues:** Chromastone glitches in The Catacombs. Installer testing is pending.
+
 # Cosmic Recomp Alpha 8.1
 
 - Toggle **Play as Albedo** in the final fight and resume to swap Way Big appearances. Green beams follow Ben and red beams follow Evil Way Big.
