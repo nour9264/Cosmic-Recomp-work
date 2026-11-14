@@ -231,6 +231,57 @@ namespace CosmicRecompi {
                             Status("Four Arms files prepared.");
                         }
                         break;
+                    case "import-alien-force":
+                        if (!InstalledGame.Ready(Root))
+                            throw new IOException("Prepare your Xbox 360 game first.");
+                        using (var dialog = new FolderBrowserDialog {
+                            Description = "Select the extracted Ben 10 Alien Force: Vilgax Attacks Xbox 360 game folder.",
+                            ShowNewFolderButton = false
+                        }) {
+                            if (dialog.ShowDialog() != DialogResult.OK) {
+                                Status("Alien Force import cancelled.");
+                                break;
+                            }
+                            string installation = InstalledGame.Installation(Root);
+                            string importer = Path.Combine(Root, "four-arms-importer");
+                            string python = Path.Combine(importer, "python.exe");
+                            string script = Path.Combine(importer, "import_alien_force.py");
+                            if (!File.Exists(python) || !File.Exists(script))
+                                throw new IOException("The Alien Force importer is missing from this installation.");
+                            if (!Directory.Exists(Path.Combine(installation, "four-arms")))
+                                throw new IOException("Import Four Arms first: the Alien Force aliens build on its form setup.");
+                            using (var runLock = new FileStream(Path.Combine(installation, "running.lock"),
+                                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+                                InstalledGame.VerifyImportedExecutable(Root);
+                                Status("Preparing the Alien Force aliens from your game files…");
+                                var start = new System.Diagnostics.ProcessStartInfo(python) {
+                                    Arguments = "-B \"" + script + "\" \"" + dialog.SelectedPath.TrimEnd('\\') +
+                                        "\" \"" + installation + "\"",
+                                    WorkingDirectory = importer,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true,
+                                    RedirectStandardError = true
+                                };
+                                using (var process = System.Diagnostics.Process.Start(start)) {
+                                    string error = process.StandardError.ReadToEnd();
+                                    process.WaitForExit();
+                                    if (process.ExitCode != 0) {
+                                        Diagnostic(error);
+                                        throw new IOException("Alien Force import failed. Select the extracted Ben 10 Alien Force: Vilgax Attacks game folder. See the launcher log for details.");
+                                    }
+                                }
+                                // The Alien Force bridge patches the game's scripts for the new forms. Put the scripts back to the
+                                // untouched originals the bridges saved, so the next start patches them from a clean state.
+                                string scripts = Path.Combine(installation, "game", "global", "scripts");
+                                if (Directory.Exists(scripts))
+                                    foreach (string backup in Directory.GetFiles(scripts, "*.cosmic-original")) {
+                                        string target = backup.Substring(0, backup.Length - ".cosmic-original".Length);
+                                        if (File.Exists(target)) File.Copy(backup, target, true);
+                                    }
+                            }
+                            Status("Alien Force aliens prepared.");
+                        }
+                        break;
                     case "import":
                         {
                             string selected = Path.Combine(Root, "selected-iso.txt");

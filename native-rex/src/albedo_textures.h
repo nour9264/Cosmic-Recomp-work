@@ -13,6 +13,7 @@ extern std::filesystem::path pack_path;
 extern std::filesystem::path button_icon_preview_path;
 enum class ButtonIcons { Auto, Xbox, PlayStation, Keyboard };
 extern std::atomic<ButtonIcons> button_icons;
+ButtonIcons CurrentButtonIcons();  // the style in use (Auto resolved to the connected controller)
 extern std::filesystem::path keyboard_icon_path;
 extern std::filesystem::path prompt_sprite_path;
 extern std::atomic<bool> final_battle_trace_enabled;

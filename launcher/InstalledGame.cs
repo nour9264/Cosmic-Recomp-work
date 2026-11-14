@@ -130,13 +130,27 @@ namespace CosmicRecompi {
             string badge = Path.Combine(folder, "user", "options-ultimatrix.rgba");
             string fourArms = Path.Combine(folder, "four-arms", "g_fa.xbx");
             bool hasFourArms = File.Exists(fourArms);
+            string imported = "";
+            uint importedCount = 0;
+#if COSMIC_VILGAX_ALIENS
+            // Imported aliens' body textures (eyes and Omnitrix badge).
+            foreach (var form in AllAliensPatch.ImportedForms(folder)) {
+                string list = Path.Combine(form.Folder, "albedo.txt");
+                if (!File.Exists(list)) continue;
+                string[] fields = File.ReadAllText(list).Trim().Split(' ');
+                string package = Path.Combine(folder, "game", "global", fields[0]);
+                if (fields.Length != 2 || !File.Exists(package)) continue;
+                imported += " --imported \"" + package + "\" " + fields[1];
+                importedCount++;
+            }
+#endif
             if (File.Exists(target)) {
                 using (var reader = new BinaryReader(File.OpenRead(target))) {
                     // The revised pack starts with the watch. Check this as well
                     // as the count to reject legacy packs with the same count.
                     if (reader.BaseStream.Length >= 16 &&
                         reader.ReadUInt64() == 0x0000000444424c41UL &&
-                        reader.ReadUInt32() == (hasFourArms ? 31u : 30u) &&
+                        reader.ReadUInt32() == (hasFourArms ? 31u : 30u) + importedCount &&
                         reader.ReadUInt32() == 0x14934253u &&
                         File.Exists(cursor) && new FileInfo(cursor).Length == 128 * 128 * 4 &&
                         File.Exists(badge) && new FileInfo(badge).Length == 2 * 128 * 128 * 4) return;
@@ -146,7 +160,7 @@ namespace CosmicRecompi {
             var start = new ProcessStartInfo(Path.Combine(tools, "python.exe")) {
                 Arguments = "-B \"" + script + "\" \"" + Path.Combine(folder, "game") + "\" \"" +
                     temporary + "\" --menu-cursor \"" + cursor + ".new\" --options-badge \"" + badge + ".new\"" +
-                    (hasFourArms ? " --four-arms \"" + fourArms + "\"" : ""),
+                    (hasFourArms ? " --four-arms \"" + fourArms + "\"" : "") + imported,
                 WorkingDirectory = tools,
                 UseShellExecute = false,
                 CreateNoWindow = true,

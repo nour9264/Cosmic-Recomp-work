@@ -5,6 +5,7 @@ from prepare_all_aliens_candidate import ROOT,authored,encode
 
 parser=argparse.ArgumentParser();parser.add_argument('--rath-disabled',action='store_true');parser.add_argument('--hero-time',action='store_true');parser.add_argument('--gpu-diagnostics',action='store_true');parser.add_argument('--performance-alpha5',action='store_true');parser.add_argument('--ultimate-voices',action='store_true');parser.add_argument('--discord-presence',action='store_true')
 parser.add_argument('--four-arms',action='store_true',help='Build the optional Four Arms launcher bridge')
+parser.add_argument('--vilgax',action='store_true',help='Build the Vilgax Attacks aliens bridge (includes Four Arms)')
 parser.add_argument('--output-dir',type=Path)
 args=parser.parse_args()
 assert not args.performance_alpha5 or (args.hero_time and args.gpu_diagnostics),'Alpha 5 requires explicit --hero-time --gpu-diagnostics'
@@ -16,7 +17,8 @@ assert not args.discord_presence or args.hero_time,'Discord presence requires th
 assert not args.ultimate_voices or args.hero_time,'Ultimate voices require Hero Time'
 assert not args.gpu_diagnostics or args.hero_time,'GPU diagnostics require the matching Hero Time API 7 profile'
 assert not (args.four_arms and args.rath_disabled),'Four Arms requires the standard roster'
-out=args.output_dir.resolve() if args.output_dir else ROOT/('build/four-arms-release-bridge' if args.four_arms else 'build/gpu-diagnostic-release' if args.gpu_diagnostics else 'build/rath-disabled-release' if args.rath_disabled else 'build/hero-time-release' if args.hero_time else 'build/settings-release')
+assert not args.vilgax or args.four_arms,'Vilgax Attacks aliens build on the Four Arms bridge'
+out=args.output_dir.resolve() if args.output_dir else ROOT/('build/vilgax-release-bridge' if args.vilgax else 'build/four-arms-release-bridge' if args.four_arms else 'build/gpu-diagnostic-release' if args.gpu_diagnostics else 'build/rath-disabled-release' if args.rath_disabled else 'build/hero-time-release' if args.hero_time else 'build/settings-release')
 out.mkdir(parents=True,exist_ok=True)
 program=out/'AllAliensProgram.bin';program.write_bytes(encode(authored(disable_rath=args.rath_disabled,preload_resources=args.hero_time,four_arms_probe=args.four_arms)))
 hero_arguments=[]
@@ -33,9 +35,10 @@ csc=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 sources=[str(ROOT/'launcher'/('four-arms' if args.four_arms and n in ('NativeBridge.cs','GameMenuPatch.cs','AllAliensPatch.cs') else '')/n)
          for n in ['NativeBridge.cs','InstalledGame.cs','IsoImage.cs','GameMenuPatch.cs','AllAliensPatch.cs','SaveReset.cs']]
 if args.ultimate_voices:sources.extend(str(ROOT/'launcher'/n) for n in ['UltimateVoicePatch.cs','UltimateVoiceLinks.cs'])
+if args.vilgax:sources.append(str(ROOT/'launcher/vilgax/VilgaxAliens.cs'))
 if args.discord_presence:sources.extend(str(ROOT/'launcher'/n) for n in ['DiscordPresence.cs','DiscordPresencePatch.cs'])
 subprocess.run([str(csc),'/nologo','/optimize+','/target:winexe','/platform:x64',
- '/define:'+('COSMIC_DISABLE_RATH' if args.rath_disabled else 'COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS'+(';COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS' if args.hero_time else '')+(';COSMIC_GPU_DIAGNOSTICS' if args.gpu_diagnostics else '')+(';COSMIC_PERFORMANCE_ALPHA5' if args.performance_alpha5 else '')+(';COSMIC_ULTIMATE_VOICES' if args.ultimate_voices else '')+(';COSMIC_DISCORD_PRESENCE' if args.discord_presence else '')),'/win32manifest:'+str(ROOT/'launcher/windows.manifest'),
+ '/define:'+('COSMIC_DISABLE_RATH' if args.rath_disabled else 'COSMIC_NATIVE_SETTINGS;COSMIC_ALIEN_STREAMS'+(';COSMIC_HERO_TIME;COSMIC_PRELOAD_ALIENS' if args.hero_time else '')+(';COSMIC_GPU_DIAGNOSTICS' if args.gpu_diagnostics else '')+(';COSMIC_PERFORMANCE_ALPHA5' if args.performance_alpha5 else '')+(';COSMIC_ULTIMATE_VOICES' if args.ultimate_voices else '')+(';COSMIC_DISCORD_PRESENCE' if args.discord_presence else '')+(';COSMIC_VILGAX_ALIENS' if args.vilgax else '')),'/win32manifest:'+str(ROOT/'launcher/windows.manifest'),
  *(['/reference:System.Web.Extensions.dll'] if args.discord_presence else []),
  '/reference:System.Windows.Forms.dll','/resource:'+str(program)+',CosmicAllAliens.bin',
  *hero_arguments,'/out:'+str(out/'CosmicBridge.exe'),*sources],check=True)

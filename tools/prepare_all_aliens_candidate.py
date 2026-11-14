@@ -48,6 +48,9 @@ class Code:
 
 BASE='cosmic_alien_base';EXTRA='cosmic_alien_extra';READY='cosmic_alien_ready'
 PENDING='cosmic_alien_pending';PAGE='cosmic_alien_page';ACTIVE='cosmic_alien_active'
+EXTRA_COUNT='cosmic_alien_extra_count'
+# Form IDs reserved for aliens imported from Vilgax Attacks (Chromastone first).
+IMPORTED_FORMS=[20,21,22,23]
 
 def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
     if four_arms_probe and (disable_rath or not preload_resources):
@@ -55,6 +58,8 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
     identities=list(range(1,12))
     if four_arms_probe:identities.append(19)
     extra_count=len(identities)-4-int(disable_rath)
+    # Forms imported from Vilgax Attacks join the roster only when installed.
+    imported=IMPORTED_FORMS if four_arms_probe else []
     result=[]
     def save(name,args,c):c.done();result.append((crc(name),args,c.finish()))
     # Callback follows the original mission loader's completion convention.
@@ -107,7 +112,15 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
         if disable_rath:c.binary(0x11,2,1,12);c.false(2,'skip'+str(identity))
         for i in range(4):c.binary(0x11,2,1,4+i);c.false(2,'skip'+str(identity))
         c.store(0,8,1);c.num(2,1);c.binary(0x0a,8,8,2);c.label('skip'+str(identity))
-    c.num(1,extra_count*2);c.put(1,PENDING);c.boolean(1,False);c.put(1,READY)
+    for identity in imported:
+        c.num(1,identity);c.get(9,'gFormData');c.index(10,9,1);c.false(10,'skip'+str(identity))
+        for i in range(4):c.binary(0x11,2,1,4+i);c.false(2,'skip'+str(identity))
+        c.store(0,8,1);c.num(2,1);c.binary(0x0a,8,8,2);c.label('skip'+str(identity))
+    if imported:
+        c.num(2,1);c.binary(0x0b,9,8,2);c.put(9,EXTRA_COUNT)
+        c.num(2,2);c.binary(0x0c,1,9,2);c.put(1,PENDING)
+    else:c.num(1,extra_count*2);c.put(1,PENDING)
+    c.boolean(1,False);c.put(1,READY)
     if preload_resources:
         c.get(1,PENDING);c.binary(0x0a,16,16,1);c.put(16,0x1729d192)
     c.boolean(1,True);c.put(1,ACTIVE);c.num(1,0);c.put(1,PAGE)
@@ -125,7 +138,9 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
     c.label('end');save('CosmicAlienLoad',0,c)
 
     if preload_resources:
-        c=Code();c.get(6,'cosmic_alien_next');c.num(1,extra_count+1)
+        c=Code();c.get(6,'cosmic_alien_next')
+        if imported:c.get(1,EXTRA_COUNT);c.num(2,1);c.binary(0x0a,1,1,2)
+        else:c.num(1,extra_count+1)
         c.binary(0x12,2,6,1);c.false(2,'end')
         c.num(1,1);c.binary(0x0a,1,6,1);c.put(1,'cosmic_alien_next')
         c.num(1,2);c.put(1,'cosmic_alien_pair_pending')
@@ -140,15 +155,18 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
     c=Code();c.get(0,ACTIVE);c.false(0,'end');c.call('CosmicAlienRestore')
     c.get(1,0xf3d407b1);c.method(1,'getcurrentmission',[1],2)
     c.get(3,EXTRA);c.get(4,'gFormData')
-    for i in range(1,extra_count+1):
-        c.num(6,i);c.index(7,3,6);c.index(8,4,7)
+    for i in range(1,extra_count+len(imported)+1):
+        c.num(6,i);c.index(7,3,6)
+        if imported:c.false(7,'unloaded')
+        c.index(8,4,7)
         c.get(9,0x93aca275);c.field(10,8,'character')
         c.method(9,'removecharacter',[9,10])
         c.get(9,0x0bfbfd2d);c.field(10,8,'characterFile');c.boolean(11,True)
         c.method(2,'unloaddata',[2,9,10,11])
         c.get(9,0x79c61e79);c.field(10,8,0x7fb535f8)
         c.method(2,'unloaddesc',[2,9,10])
-    for name in [BASE,EXTRA,READY,PENDING,PAGE,ACTIVE]:c.nil(1);c.put(1,name)
+    if imported:c.label('unloaded')
+    for name in [BASE,EXTRA,READY,PENDING,PAGE,ACTIVE]+([EXTRA_COUNT] if imported else []):c.nil(1);c.put(1,name)
     c.label('end');save('CosmicAlienUnload',0,c)
 
     c=Code();c.native('cosmic_all_aliens_page',0)

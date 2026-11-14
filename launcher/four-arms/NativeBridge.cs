@@ -53,6 +53,14 @@ namespace CosmicRecompi {
                 if(!parent.WaitForExit(30000))throw new IOException("The launcher did not finish closing. The game was not started.");
             }
         }
+#if COSMIC_VILGAX_ALIENS
+        static bool SameBytes(string a,string b) {
+            byte[] x=File.ReadAllBytes(a),y=File.ReadAllBytes(b);
+            if(x.Length!=y.Length)return false;
+            for(int i=0;i<x.Length;i++)if(x[i]!=y[i])return false;
+            return true;
+        }
+#endif
         internal static void Play(Action<System.Diagnostics.ProcessStartInfo> configureProcess = null, Action<System.Diagnostics.Process> onLauncherOpened = null) {
 #if COSMIC_DISCORD_PRESENCE
                         string presenceFile=Path.Combine(InstalledGame.Installation(Root),"logs","discord-state-"+Guid.NewGuid().ToString("N")+".txt");
@@ -86,7 +94,28 @@ namespace CosmicRecompi {
                                     File.Move(temporary,destination);
                                 }
                             }
-                            GameMenuPatch.Ensure(Path.Combine(installation,"game"),File.Exists(patch)?File.ReadAllBytes(patch):null);
+#if COSMIC_VILGAX_ALIENS
+                            // Aliens imported from Vilgax Attacks: their package and attack table.
+                            foreach(var form in AllAliensPatch.ImportedForms(installation)) {
+                                foreach(string source in Directory.GetFiles(form.Folder)) {
+                                    string name=Path.GetFileName(source);
+                                    if(!(name.StartsWith("g_") && name.EndsWith(".xbx")) && !(name.StartsWith("atk_") && name.EndsWith(".ddf")))continue;
+                                    string destination=Path.Combine(name.EndsWith(".ddf")?Path.Combine(global,"scripts"):global,name);
+                                    if(File.Exists(destination) && SameBytes(source,destination))continue;
+                                    File.Copy(source,destination+".cosmic-new",true);
+                                    if(File.Exists(destination))File.Delete(destination);
+                                    File.Move(destination+".cosmic-new",destination);
+                                }
+                            }
+#endif
+                            // The chosen language (launcher or the game's Video menu) selects the game's own text table.
+                            string languageCode=null;
+                            try {
+                                string video=Path.Combine(installation,"user","pc-video.ini");
+                                if(File.Exists(video))foreach(string line in File.ReadAllLines(video))if(line.StartsWith("language=",StringComparison.Ordinal))languageCode=line.Substring(9).Trim();
+                            } catch(IOException) { }
+                            byte[] translated=GameMenuPatch.LanguageTranslation(Path.Combine(installation,"game"),languageCode);
+                            GameMenuPatch.Ensure(Path.Combine(installation,"game"),translated!=null?translated:File.Exists(patch)?File.ReadAllBytes(patch):null);
                             AllAliensPatch.Ensure(Path.Combine(installation,"game"));
                             File.AppendAllText(InstalledGame.LauncherLog(Root), "Four Arms probe: independent probe ID 19 applied; original Rath and Ultimate Swampfire IDs retained; Four Arms current and original upgrade-cost tables initialized." + Environment.NewLine);
 #if COSMIC_ULTIMATE_VOICES
@@ -103,6 +132,11 @@ namespace CosmicRecompi {
 #endif
 #if COSMIC_NATIVE_SETTINGS
                             start.EnvironmentVariables["BEN10_RESET_PROGRESS_EVENT"]=resetName;
+#endif
+#if COSMIC_VILGAX_ALIENS
+                            // The player's four slots, two pages of extras, plus pages for imported aliens.
+                            int imported=AllAliensPatch.ImportedForms(InstalledGame.Installation(Root)).Count;
+                            if(imported>0)start.EnvironmentVariables["BEN10_ALIEN_PAGES"]=(1+(8+imported+3)/4).ToString();
 #endif
                             if(configureProcess!=null)configureProcess(start);
                         })) {
@@ -131,6 +165,13 @@ namespace CosmicRecompi {
                         }
                         }
 #endif
+                        // The game's Video menu asked for a restart so a new language loads its text.
+                        string languageRestart=Path.Combine(InstalledGame.Installation(Root),"user","language-restart.txt");
+                        if(File.Exists(languageRestart)) {
+                            File.Delete(languageRestart);
+                            Play(configureProcess,onLauncherOpened);
+                            return;
+                        }
                         Status("Ready to play.");
                         if (returnRequested) {
                             var next = new System.Diagnostics.ProcessStartInfo(Path.Combine(Root, "CosmicRecomp.exe"), "--launcher");

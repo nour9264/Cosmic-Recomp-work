@@ -321,6 +321,8 @@ static ButtonIcons ResolvedButtonIcons() {
   return mode == ButtonIcons::Auto ? ConnectedControllerIcons() : mode;
 }
 
+ButtonIcons CurrentButtonIcons() { return ResolvedButtonIcons(); }
+
 bool HasPromptSprites() {
   return !SpritePixels().empty();
 }
@@ -535,7 +537,7 @@ inline std::vector<Texture> ReadPack(const std::filesystem::path& path) {
   if (!file || (version != std::string_view("ALBD\2\0\0\0", 8) &&
                 version != std::string_view("ALBD\3\0\0\0", 8) &&
                 version != std::string_view("ALBD\4\0\0\0", 8)) ||
-      !count || count > 32) return {};
+      !count || count > 64) return {};
   std::vector<Texture> textures;
   for (uint32_t i = 0; i < count; ++i) {
     Texture item{};
@@ -820,6 +822,13 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
     // The stock menu also binds these textures without their mip pages.
     const bool bezel = item.key == 0xc8c35802;
     const bool base_only = !mip && (Pack != 0 || menu_trim || bezel || boss_hud || item.key == 0xe9c69775);
+    if (Pack == 0 && (item.key == 0x17b607b8 || item.key == 0x8d3127de || item.key == 0x5ad24529)) {
+      static thread_local int traced = 0;
+      if (traced++ < 40)
+        REXLOG_INFO("Albedo trace: key={:08X} bind {}x{} fmt={} size={} base={:08X} mip={:08X} item {}x{} fmt={} size={} mip_size={} prefix_ok={}",
+                    item.key, width, height, format, base_size, base, mip, item.width, item.height, item.format,
+                    item.base_size, item.mip_size, item.prefix_hash == prefix);
+    }
     if (item.width != width || item.height != height || item.format != format ||
         item.base_size != base_size || (!matching_key && item.prefix_hash != prefix) ||
         (!base_only && (item.mip_size != 0) != (mip != 0))) continue;

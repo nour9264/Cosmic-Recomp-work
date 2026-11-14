@@ -47,7 +47,20 @@ namespace CosmicRecompi {
             for(int i=at;i<48+headers;i++)if(b[i]!=0)throw new InvalidDataException("Nonzero voice bank padding.");
             return result;
         }
-        internal static byte[] Merge(byte[] original,byte[][] donors) {
+        // Imported aliens' name callouts follow the five Ultimate callouts,
+        // from slot 221 in installation order (tools/prepare_vilgax_import.py).
+        internal static List<byte[]> ImportedCallouts(string game) {
+            var callouts=new List<byte[]>();
+#if COSMIC_VILGAX_ALIENS
+            foreach(var form in AllAliensPatch.ImportedForms(Path.GetDirectoryName(game))) {
+                string path=Path.Combine(form.Folder,"callout.fsb");
+                if(File.Exists(path))callouts.Add(File.ReadAllBytes(path));
+            }
+#endif
+            return callouts;
+        }
+        internal static byte[] Merge(byte[] original,byte[][] donors) {return Merge(original,donors,new List<byte[]>());}
+        internal static byte[] Merge(byte[] original,byte[][] donors,List<byte[]> imported) {
             var samples=Parse(original);var selected=new List<Sample>();
             for(int i=0;i<Prefixes.Length;i++) {
                 Sample found=null;
@@ -68,7 +81,13 @@ namespace CosmicRecompi {
                 Buffer.BlockCopy(name,0,header,2,name.Length);
                 samples.Add(new Sample{Name=Encoding.ASCII.GetString(name),Header=header,Data=selected[0].Data});
             }
-            samples.AddRange(selected);int headers=0,data=0;
+            samples.AddRange(selected);
+            foreach(byte[] bank in imported) {
+                var callout=Parse(bank);
+                if(callout.Count!=1)throw new InvalidDataException("Unexpected imported callout bank.");
+                samples.Add(callout[0]);
+            }
+            int headers=0,data=0;
             foreach(var sample in samples){headers=checked(headers+sample.Header.Length);data=checked(data+sample.Data.Length);}
             headers=checked((48+headers+31)/32*32-48);var output=new byte[checked(48+headers+data)];
             Buffer.BlockCopy(original,0,output,0,48);Put(output,4,samples.Count);Put(output,8,headers);Put(output,12,data);
@@ -97,11 +116,15 @@ namespace CosmicRecompi {
                 originals.Add(pair.Key,bytes);paths.Add(pair.Key,path);
             }
             var donors=new byte[][]{originals["l_chin"],originals["l_mili"],originals["l_romd"],originals["l_pari"],originals["l_rush"]};
-            var updates=new Dictionary<string,byte[]>();
+            var updates=new Dictionary<string,byte[]>();var imported=ImportedCallouts(game);
             foreach(var pair in originals) {
-                byte[] updated=Merge(pair.Value,donors);string path=paths[pair.Key];string current=Hash(File.ReadAllBytes(path));
+                byte[] updated=Merge(pair.Value,donors,imported);string path=paths[pair.Key];string current=Hash(File.ReadAllBytes(path));
                 if(current==Hash(updated))continue;
-                if(current!=Hash(pair.Value) && current!=Hash(Legacy(pair.Value,donors)))throw new IOException("Another patch modified the voice bank: "+pair.Key);
+                // An install that imported fewer aliens is an earlier version of this one.
+                bool earlier=imported.Count>0 && current==Hash(Merge(pair.Value,donors));
+                for(int k=1;k<imported.Count && !earlier;k++)earlier=current==Hash(Merge(pair.Value,donors,imported.GetRange(0,k)));
+                if(current!=Hash(pair.Value) && current!=Hash(Legacy(pair.Value,donors)) && !earlier)
+                    throw new IOException("Another patch modified the voice bank: "+pair.Key);
                 updates.Add(pair.Key,updated);
             }
             foreach(var pair in updates) {

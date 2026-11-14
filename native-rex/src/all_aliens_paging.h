@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstdlib>
 
 namespace ben10 {
 // Only advances on an RT rising edge while LT is already held. Releasing LT
@@ -15,11 +16,21 @@ class AlienPages {
       left_down_=false;
       return enabled ? 0 : -1;
     }
-    if (left_down_ && right && !right_down_) page_=(page_+1)%3;
+    if (left_down_ && right && !right_down_) page_=(page_+1)%Pages();
     left_down_=true;right_down_=right;
     return page_;
   }
  private:
+  // The player's four slots plus two pages of extras; the launcher raises
+  // this when it installs aliens imported from Vilgax Attacks.
+  static int Pages() {
+    static const int pages=[] {
+      const char* value=std::getenv("BEN10_ALIEN_PAGES");
+      const int count=value?std::atoi(value):3;
+      return count>=3 && count<=8?count:3;
+    }();
+    return pages;
+  }
   int page_=0;
   bool left_down_=false,right_down_=false;
 };

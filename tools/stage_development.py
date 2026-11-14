@@ -30,6 +30,12 @@ def stage(native, frontend, output):
     for name in ('CosmicRecomp.exe', 'CosmicBridge.exe'):
         shutil.copyfile(frontend / name, output / name)
     (runtime / 'pc-menu-api.txt').write_text('7\n', encoding='ascii')
+    # Language files that ship with the game (hash-keyed translations only; see tools/build_game_text_translations.py).
+    shipped = ROOT / 'native-rex' / 'translations'
+    if shipped.is_dir():
+        (runtime / 'translations').mkdir(exist_ok=True)
+        for file in shipped.glob('text-*.tsv'):
+            shutil.copyfile(file, runtime / 'translations' / file.name)
     names = sorted([*sources, 'pc-menu-api.txt'])
     hashes = {name: hashlib.sha256((runtime / name).read_bytes()).hexdigest() for name in names}
     (runtime / 'SHA256SUMS.txt').write_text(''.join(f'{hashes[name]}  {name}\n' for name in names), encoding='ascii')

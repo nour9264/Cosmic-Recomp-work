@@ -31,7 +31,7 @@ for line in manifest.read_text().splitlines():
     runtime.add(name)
 assert required<=runtime
 assert (stage/'runtime/pc-menu-api.txt').read_text().strip() in {'3','7'},'Matching released native-menu runtime required'
-allowed_root={'CosmicRecomp.exe','CosmicBridge.exe','CosmicFourArmsBridge.exe','PROVENANCE.json','README.txt',
+allowed_root={'CosmicRecomp.exe','CosmicBridge.exe','CosmicFourArmsBridge.exe','CosmicVilgaxBridge.exe','PROVENANCE.json','README.txt',
               'README.md','README.pt-BR.md','SHA256SUMS.txt','LICENSE','LICENSE.txt',
               'ARCHITECTURE.md','BUILD.md','CONTRIBUTING.md','RELEASE_NOTES.md','HOTFIX.md',
               'ROADMAP.md','SECURITY.md','SOURCES.md','TESTING.md','THIRD_PARTY.md',
@@ -45,6 +45,7 @@ importer={'python.exe','python3.dll','python310.dll','python310.zip','python310.
           'extract_discord_level_images.py','extract_four_arms_skin_weights.py','merge_alien_streams.py',
           'prepare_all_aliens_candidate.py','prepare_pause_menu_extension.py',
           'stage_four_arms_archive.py','stage_four_arms_registration.py','prepare_albedo_textures.py',
+          'import_alien_force.py','prepare_vilgax_import.py','wheel_icon_texture.py','add_ring_pictures_to_gtex.py',
           'way_big_portrait.rgb'}
 if (stage/'four-arms-importer/prepare_albedo_textures.py').is_file():
     assert (stage/'four-arms-importer/way_big_portrait.rgb').stat().st_size == 256 * 256 * 3
@@ -54,9 +55,13 @@ for p in sorted(stage.rglob('*')):
     relative=p.relative_to(stage)
     assert not p.is_symlink(),'No staged links'
     if len(relative.parts)==1:assert p.name in allowed_root|crt,relative
+    elif relative.parts[0]=='runtime' and len(relative.parts)==3 and relative.parts[1]=='translations':
+        assert p.name.startswith('text-') and p.suffix=='.tsv',relative
     elif relative.parts[0]=='runtime':assert len(relative.parts)==2 and (p.name in runtime or p.name=='SHA256SUMS.txt'),relative
     elif relative.parts[0]=='licenses':
         assert p.suffix.lower() in ('.txt','.md','') or p.name.upper().startswith(('LICENSE','LICENCE','COPYING','NOTICE','AUTHORS')),relative
+    elif relative.parts[0]=='four-arms-importer' and len(relative.parts)==3 and relative.parts[1]=='pictures':
+        assert p.suffix.lower()=='.png',relative
     elif relative.parts[0]=='four-arms-importer':
         assert len(relative.parts)==2 and p.name in importer|crt,relative
     else:raise AssertionError('Unexpected package directory: '+str(relative))

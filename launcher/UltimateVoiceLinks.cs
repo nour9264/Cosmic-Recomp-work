@@ -16,6 +16,52 @@ namespace CosmicRecompi {
    }
    return Encoding.UTF8.GetBytes(text);
   }
+  // Descriptors for imported aliens' name callouts (UltimateVoicePatch slots 221+).
+  internal static byte[] Sounds(byte[] original,string game){return Sounds(original,game,true);}
+  // effects=false gives an install from before imported sound effects existed.
+  static byte[] Sounds(byte[] original,string game,bool effects){return Sounds(original,game,effects,int.MaxValue);}
+  // limit: how many imported aliens to include (an earlier install had fewer).
+  static byte[] Sounds(byte[] original,string game,bool effects,int limit) {
+   byte[] updated=Sounds(original);
+#if COSMIC_VILGAX_ALIENS
+   string text=Encoding.UTF8.GetString(updated);int slot=221;var lines=new StringBuilder();var attackLines=new StringBuilder();
+   int taken=0;
+   foreach(var form in AllAliensPatch.ImportedForms(Path.GetDirectoryName(game))) {
+    if(taken++>=limit)break;
+    string path=Path.Combine(form.Folder,"callout.txt");
+    if(File.Exists(path)) {
+     string name=File.ReadAllText(path).Trim();
+     if(!Regex.IsMatch(name,"^[a-z0-9_]+$") || text.Contains("<sound name=\""+name+"\""))throw new InvalidDataException("Unexpected imported callout name.");
+     lines.Append("<sound name=\""+name+"\" id=\""+slot+++"\" bank=\"voice\" isloop=\"no\" falloffstart=\"-1.0\" falloffend=\"-1.0\" volume=\"1.0\" />\r\n");
+    }
+    // Sound effects in the form's own FMOD project (package section 24).
+    string sounds=Path.Combine(form.Folder,"sounds.txt");
+    if(!effects || !File.Exists(sounds))continue;
+    foreach(string line in File.ReadAllLines(sounds)) {
+     if(line.Length==0)continue;
+     var match=Regex.Match(line,"^<sound name=\"([a-z0-9_]+)\" id=\"[0-9]+\" swpgroupid=\"0\" prjid=\"[a-z0-9_]+\"/>$");
+     if(!match.Success || text.Contains("<sound name=\""+match.Groups[1].Value+"\""))throw new InvalidDataException("Unexpected imported sound.");
+     // The enclosing <group> sets a sound's mixer group and project lookup:
+     // effects belong in "sfxattack" with Four Arms' (a descriptor inside
+     // "dialog" is treated as a voice line and crashes when played).
+     attackLines.Append(line+"\r\n");
+    }
+   }
+   if(attackLines.Length>0) {
+    var attackAnchor=new Regex("<sound name=\"spinning_crusher\"[^>]*/>\r?\n");
+    if(attackAnchor.Matches(text).Count!=1)throw new InvalidDataException("Missing attack sound anchor.");
+    text=attackAnchor.Replace(text,m=>m.Value+attackLines.ToString());
+    updated=Encoding.UTF8.GetBytes(text);
+   }
+   if(lines.Length>0) {
+    var anchor=new Regex("<sound name=\"ult_spidermonkey_name_callout_01\"[^>]*/>\r?\n");
+    if(anchor.Matches(text).Count!=1)throw new InvalidDataException("Missing callout anchor.");
+    text=anchor.Replace(text,m=>m.Value+lines.ToString());
+    updated=Encoding.UTF8.GetBytes(text);
+   }
+#endif
+   return updated;
+  }
   internal static void Ensure(string game) {
    var updates=new Dictionary<string,byte[]>();var originals=new Dictionary<string,byte[]>();
    var pins=new Dictionary<string,string>(Pins);pins.Add("global/scripts/sounds.ddf","83d51bc335c69a74c5f44c85f16bedfa1e4c301b9911c03d7f2be0b6feabef6b");
@@ -23,10 +69,17 @@ namespace CosmicRecompi {
     string path=Path.Combine(game,entry.Key.Replace('/',Path.DirectorySeparatorChar)),backup=path+".cosmic-voice-original";
     byte[] original=File.ReadAllBytes(File.Exists(backup)?backup:path);
     if(UltimateVoicePatch.Hash(original)!=entry.Value)throw new IOException("Unsupported original voice links: "+entry.Key);
-    byte[] updated=entry.Key.EndsWith("sounds.ddf")?Sounds(original):AllAliensPatch.VoiceResolver(original);
+    bool sounds=entry.Key.EndsWith("sounds.ddf");
+    byte[] updated=sounds?Sounds(original,game):AllAliensPatch.VoiceResolver(original);
     string current=UltimateVoicePatch.Hash(File.ReadAllBytes(path));
     if(current==UltimateVoicePatch.Hash(updated))continue;
-    if(current!=entry.Value)throw new IOException("Unknown voice-link edit: "+entry.Key);
+    bool earlier=false;
+#if COSMIC_VILGAX_ALIENS
+    if(sounds)for(int k=1;k<AllAliensPatch.ImportedForms(Path.GetDirectoryName(game)).Count && !earlier;k++)
+     earlier=current==UltimateVoicePatch.Hash(Sounds(original,game,true,k));
+#endif
+    if(current!=entry.Value && !earlier && !(sounds && (current==UltimateVoicePatch.Hash(Sounds(original)) ||
+       current==UltimateVoicePatch.Hash(Sounds(original,game,false)))))throw new IOException("Unknown voice-link edit: "+entry.Key);
     originals.Add(path,original);updates.Add(path,updated);
    }
    foreach(var entry in updates) {
