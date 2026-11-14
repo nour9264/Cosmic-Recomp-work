@@ -47,9 +47,9 @@ class VM:
             elif kind==6:r[b]=read(a)
             elif kind==7:r[a]=self.globals.get(words[pc+1])
             elif kind==8:self.globals[words[pc+1]]=read(a)
-            elif kind in (0x0a,0x0b,0x0c,0x10,0x11,0x12,0x13):
+            elif kind in (0x0a,0x0b,0x0c,0x0d,0x10,0x11,0x12,0x13):
                 left,right=read(a),read(b)
-                r[d]={0x0a:lambda:left+right,0x0b:lambda:left-right,0x0c:lambda:left*right,
+                r[d]={0x0a:lambda:left+right,0x0b:lambda:left-right,0x0c:lambda:left*right,0x0d:lambda:left/right,
                       0x10:lambda:left==right,0x11:lambda:left!=right,
                       0x12:lambda:left<right,0x13:lambda:left>right}[kind]()
             elif kind==0x16:r[a]={}

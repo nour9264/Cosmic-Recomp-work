@@ -17,6 +17,7 @@ PAIR_PENDING = 'cosmic_hero_pair_pending'
 FORMS = 'cosmic_hero_forms'
 OWNS_GATE = 'cosmic_hero_owns_mission_gate'
 COOLDOWN = 'cosmic_hero_recharge_duration'
+LAST_ENERGY = 'cosmic_hero_last_energy'
 
 
 def authored(ultimate_voices=False, discord_presence=False):
@@ -211,6 +212,7 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.label('alive')
     c.call('CosmicHeroLoad')
     c.call('CosmicHeroAdvance')
+    c.call('CosmicHeroAbilityCost')
     c.call('CosmicHeroMeter')
     c.num(1, 1)
     c.binary(0x10, 2, 0, 1); c.false(2, 'end')
@@ -232,8 +234,35 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.method(5, 'person', [5], 6); c.false(6, 'end')
     c.method(6, 'getmaxenergy', [6], 7)
     c.binary(0x0c, 7, 7, 4); c.method(6, 'setenergy', [6, 7])
+    c.num(1, 2); c.binary(0x10, 2, 0, 1); c.false(2, 'end')
+    c.put(7, LAST_ENERGY)
     c.label('end'); c.done()
     result.append((crc('CosmicHeroMeter'), 0, c.finish()))
+
+    # Ultimate abilities spend energy (their cost is set per ability by the
+    # launcher's attack-table patch). While an Ultimate is active the energy
+    # bar is its timer, so convert any energy the game spent since the last
+    # meter update into transformation time. An empty timer then follows the
+    # original expiry path back to Ben in CosmicHeroAdvance.
+    c = Code()
+    c.get(0, PHASE); c.num(1, 2); c.binary(0x10, 2, 0, 1)
+    c.false(2, 'reset')
+    c.get(3, LAST_ENERGY); c.false(3, 'end')
+    c.get(5, 'player'); c.false(5, 'end')
+    c.method(5, 'person', [5], 6); c.false(6, 'end')
+    c.method(6, 'getenergy', [6], 7)
+    c.method(6, 'getmaxenergy', [6], 8)
+    c.binary(0x0b, 9, 3, 7)
+    c.num(10, 0.02); c.binary(0x0c, 10, 10, 8)
+    c.binary(0x13, 2, 9, 10); c.false(2, 'end')
+    c.binary(0x0d, 11, 9, 8); c.num(12, ACTIVE_SECONDS); c.binary(0x0c, 11, 11, 12)
+    c.get(13, REMAINING); c.binary(0x0b, 13, 13, 11)
+    c.num(14, 0); c.binary(0x13, 2, 13, 14); c.false(2, 'empty')
+    c.put(13, REMAINING); c.jump('end')
+    c.label('empty'); c.put(14, REMAINING); c.jump('end')
+    c.label('reset'); c.nil(3); c.put(3, LAST_ENERGY)
+    c.label('end'); c.done()
+    result.append((crc('CosmicHeroAbilityCost'), 0, c.finish()))
 
     # Only called during original form-system teardown. Keep owned resources
     # resident when the option is merely toggled off during a mission.

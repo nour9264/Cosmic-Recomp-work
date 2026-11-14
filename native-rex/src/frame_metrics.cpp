@@ -64,12 +64,16 @@ extern "C" int Ben10MouseCameraStick(double* x,double* y) {
   if(!logged){logged=true;REXLOG_INFO("Direct mouse look active: {:.1f},{:.1f} px -> stick {:.3f},{:.3f}",dx,dy,*x,*y);}
   return 1;
 }
-namespace { thread_local std::optional<ben10::fov::Scope> fov_scope; }
-extern "C" void Ben10FovBegin(uint8_t* base,uint32_t source,uint32_t vectors) {
-  fov_scope.emplace(base,source,vectors);
-}
-extern "C" void Ben10FovEnd() {
-  fov_scope.reset();
+extern "C" double Ben10FovDegrees(double degrees) {
+  // Gameplay cameras only, and only plausible perspective values; menus,
+  // cinematics and special-purpose views keep the original FOV.
+  const int extra=ben10::fov::offset.load(std::memory_order_relaxed);
+  if(!extra || !ben10_pc_menu::mission_active.load(std::memory_order_relaxed) ||
+     !(degrees>=20 && degrees<=80))return degrees;
+  const double wanted=std::clamp(degrees+extra,20.0,110.0);
+  static std::atomic<bool> logged{false};
+  if(!logged.exchange(true))REXLOG_INFO("FOV applied: camera vertical FOV {:.2f} -> {:.2f} degrees",degrees,wanted);
+  return wanted;
 }
 extern "C" void Ben10FrameSubmitted() {
   auto& audit=ben10_cadence::audit;

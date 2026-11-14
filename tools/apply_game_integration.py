@@ -533,33 +533,168 @@ for name, hooks in {
         p.write_text(cleaned)
         changes += 1
 
-# Field of View: sub_82166B08 uploads engine matrices as vertex shader
-# constants through sub_8247AF40 (source r5, r6 vectors). Rescale the
-# gameplay projection in the source for the upload, then restore it.
+# Field of View: the camera keeps its vertical FOV in degrees at offset 80.
+# Offset it wherever it is read, so every view agrees: the projection
+# builders sub_821A5898 and sub_821A5988, and the per-frame camera setup
+# sub_821645F0, which derives the culling frustum from it.
+for name, loads in {
+    'sub_821A5898': [('r3', 'f13')],
+    'sub_821A5988': [('r3', 'f13')],
+    'sub_821645F0': [('r30', 'f13'), ('r30', 'f10')],
+}.items():
+    p = locate_functions(args.generated, [name])[name]
+    text = p.read_text()
+    start = text.index('DEFINE_REX_FUNC(' + name + ') {')
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    original_body = body
+    for register, value in loads:
+        load = ('\ttemp.u32 = REX_LOAD_U32(ctx.' + register + '.u32 + 80);\n'
+                '\tctx.' + value + '.f64 = double(temp.f32);\n')
+        hooked = load + '\tctx.' + value + '.f64 = Ben10FovDegrees(ctx.' + value + '.f64);\n'
+        if hooked in body:
+            continue
+        if body.count(load) != 1:
+            raise RuntimeError('Unexpected camera FOV read in ' + name)
+        body = body.replace(load, hooked)
+    if body != original_body:
+        p.write_text(text[:start] + body + text[end:])
+        changes += 1
+
+# Earlier local builds rescaled the uploaded matrices around sub_8247AF40 in
+# sub_82166B08, which only reached the lighting copy. Remove those hooks.
 name = 'sub_82166B08'
 p = locate_functions(args.generated, [name])[name]
 text = p.read_text()
-start = text.index('DEFINE_REX_FUNC(' + name + ') {')
+cleaned = text
+for resume in ('82166CDC', '82166D94'):
+    call = 'ctx.lr = 0x' + resume + ';\n\tsub_8247AF40(ctx, base);'
+    cleaned = cleaned.replace('{\n\tBen10FovBegin(base, ctx.r5.u32, ctx.r6.u32);\n\t' + call +
+                              '\n\tBen10FovEnd();\n\t}', call)
+    cleaned = cleaned.replace('{\n\tconst uint32_t cosmic_constants = ctx.r3.u32 + ((ctx.r4.u32 + 120) << 4);\n'
+                              '\tconst uint32_t cosmic_vectors = ctx.r6.u32;\n\t' + call +
+                              '\n\tBen10ScaleProjection(base, cosmic_constants, cosmic_vectors);\n\t}', call)
+if cleaned != text:
+    p.write_text(cleaned)
+    changes += 1
+
+# Weapon diagnostics: person:setweapon's node lookup (sub_821417F8), the
+# socket bone found when attaching it (sub_8213E178) and the game's own
+# error print (sub_82238A28), all to runtime.log.
+weapon_trace_hooks = {
+    'sub_821417F8': [
+        ('ctx.lr = 0x8214181C;\n\tsub_821E6560(ctx, base);',
+         'const uint32_t traced_weapon = ctx.r3.u32;\n\tctx.lr = 0x8214181C;\n\tsub_821E6560(ctx, base);\n'
+         '\tben10::weapon_trace::Lookup(ctx.r30.u32, ctx.r29.u32, traced_weapon, ctx.r3.u32, base);'),
+        ('ctx.lr = 0x82141840;\n\tsub_821E4B78(ctx, base);',
+         'ctx.lr = 0x82141840;\n\tsub_821E4B78(ctx, base);\n'
+         '\tben10::weapon_trace::Instance(ctx.r30.u32, ctx.r29.u32, ctx.r3.u32);'),
+    ],
+    'sub_8213E178': [
+        (f'ctx.lr = 0x{resume};\n\tsub_82132F40(ctx, base);',
+         f'ctx.lr = 0x{resume};\n\tsub_82132F40(ctx, base);\n'
+         '\tben10::weapon_trace::Bone(ctx.r31.u32, ctx.r26.u32, ctx.r3.u32);')
+        for resume in ('8213E228', '8213E25C', '8213E27C', '8213E29C')],
+    'sub_82238A28': [
+        ('REX_FUNC_PROLOGUE();', 'REX_FUNC_PROLOGUE();\n\tben10::weapon_trace::ScriptError(ctx.r3.u32, base);')],
+    'sub_8221AD00': [
+        ('REX_FUNC_PROLOGUE();', 'REX_FUNC_PROLOGUE();\n\tben10::weapon_trace::Descriptor(ctx.r3.u32, base);')],
+    # Events sent to a node, its components and (recurse) its children.
+    'sub_821E2680': [
+        ('REX_FUNC_PROLOGUE();', 'REX_FUNC_PROLOGUE();\n'
+         '\tben10::weapon_trace::Event(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, uint32_t(ctx.lr));')],
+}
+for name, p in locate_functions(args.generated, weapon_trace_hooks).items():
+    text = p.read_text()
+    start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    if end < 0:
+        end = len(text)
+    body = text[start:end]
+    for anchor, hooked in weapon_trace_hooks[name]:
+        if hooked in body:
+            continue
+        if body.count(anchor) != 1:
+            raise RuntimeError(f'Unexpected weapon trace site in {name}')
+        body = body.replace(anchor, hooked)
+    header = '#include "../../src/weapon_trace.h"\n'
+    p.write_text((header if header not in text else '') + text[:start] + body + text[end:])
+    changes += 1
+
+# The data-file record manager (sub_821AE518) keeps each .ddf record's 20-byte
+# header in a fixed pool of 1000 nodes; imported aliens add hundreds of
+# records and exhausted it (null node written while loading a level).
+name = 'sub_821AE518'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
 end = text.find('\nDEFINE_REX_FUNC(', start + 1)
 if end < 0:
     end = len(text)
 body = text[start:end]
-original_body = body
-for resume in ('82166CDC', '82166D94'):
-    call = 'ctx.lr = 0x' + resume + ';\n\tsub_8247AF40(ctx, base);'
-    # An earlier local build rescaled the driver copy after the upload.
-    previous = ('{\n\tconst uint32_t cosmic_constants = ctx.r3.u32 + ((ctx.r4.u32 + 120) << 4);\n'
-                '\tconst uint32_t cosmic_vectors = ctx.r6.u32;\n\t' + call +
-                '\n\tBen10ScaleProjection(base, cosmic_constants, cosmic_vectors);\n\t}')
-    hooked = '{\n\tBen10FovBegin(base, ctx.r5.u32, ctx.r6.u32);\n\t' + call + '\n\tBen10FovEnd();\n\t}'
-    body = body.replace(previous, call)
-    if hooked in body:
-        continue
-    if body.count(call) != 1:
-        raise RuntimeError('Unexpected shader constant upload')
-    body = body.replace(call, hooked)
-if body != original_body:
-    p.write_text(text[:start] + body + text[end:])
+old = '\tctx.r4.s64 = 1000;\n\t// bl 0x821a3028'
+new = '\tctx.r4.s64 = 8000;\n\t// bl 0x821a3028'
+if old in body:
+    p.write_text(text[:start] + body.replace(old, new) + text[end:])
+    changes += 1
+elif new not in body:
+    raise RuntimeError('Unexpected record pool size in ' + name)
+
+# A laser beam's ray (sub_82109D70) also tests the capsule of the character
+# that fires it and takes a negative distance from a start inside it, so an
+# effect starting at an alien's eyes or hands is cut to nothing. Skip hits on
+# the beam's owner (laser +72, set by sub_82134D40), as its damage test does.
+name = 'sub_82109D70'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+old = '\tif (ctx.cr6.eq) goto loc_82109E6C;\n\t// lwz r7,0(r24)'
+new = ('\tif (ctx.cr6.eq) goto loc_82109E6C;\n'
+       '\tif (ctx.r7.u32 != 0 && ctx.r7.u32 == REX_LOAD_U32(ctx.r31.u32 + 72)) goto loc_82109E6C;  // Cosmic: not the owner.\n'
+       '\t// lwz r7,0(r24)')
+if new not in body:
+    if body.count(old) != 1:
+        raise RuntimeError('Unexpected laser ray body in ' + name)
+    p.write_text(text[:start] + body.replace(old, new) + text[end:])
+    changes += 1
+
+# Double jump and glide (native-rex/src/glide_abilities.h): the player
+# controller update adds the ability bits to imported aliens that carry Big
+# Chill's glide settings. Earlier local builds also traced the jump code
+# (jump_trace.h); remove those calls.
+old_trace_calls = ('\tben10::jump_trace::Press(ctx.r3.u32, base);\n', '\tben10::jump_trace::Air(ctx.r31.u32, base);\n',
+                   '\tben10::jump_trace::Input(ctx.r31.u32, base);\n')
+for p in args.generated.glob('*.cpp'):
+    text = p.read_text()
+    cleaned = text
+    for call in old_trace_calls:
+        cleaned = cleaned.replace(call, '')
+    cleaned = cleaned.replace('#include "../../src/jump_trace.h"\n', '')
+    if cleaned != text:
+        p.write_text(cleaned)
+        changes += 1
+name = 'sub_8212DAB0'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+anchor = 'loc_8212DB5C:\n'
+hooked = anchor + '\tben10::glide_abilities::Grant(ctx.r31.u32, base);\n'
+if hooked not in body:
+    if body.count(anchor) != 1:
+        raise RuntimeError('Unexpected jump input site in ' + name)
+    body = body.replace(anchor, hooked)
+    header = '#include "../../src/glide_abilities.h"\n'
+    p.write_text((header if header not in text else '') + text[:start] + body + text[end:])
     changes += 1
 
 print('PC integration applied to',changes,'locally generated functions.')

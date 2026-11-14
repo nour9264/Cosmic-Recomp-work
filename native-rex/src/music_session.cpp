@@ -9,8 +9,13 @@
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Storage.Streams.h>
 
+#include <d2d1.h>
+#include <dwrite.h>
+#include <wincodec.h>
+
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 #include <thread>
 
@@ -25,6 +30,7 @@ Snapshot snapshot;
 Settings settings;
 std::filesystem::path settings_path;
 std::vector<uint8_t> artwork;  // Guarded by state_mutex.
+TextImage title_image, artist_image;  // Guarded by state_mutex.
 std::atomic<int> pending_command{0};
 std::atomic<bool> overlay_open{false};
 std::atomic<bool> running{false};
@@ -123,8 +129,70 @@ void Execute(const GlobalSystemMediaTransportControlsSession& session, int comma
   }
 }
 
+// Title and artist drawn by DirectWrite, which falls back to other system
+// fonts for scripts the overlay's baked ImGui font lacks (Cyrillic, Arabic,
+// CJK, symbols). The overlay tints the white coverage like its own text.
+class TextRenderer {
+ public:
+  TextImage Render(const std::string& utf8, float size, DWRITE_FONT_WEIGHT weight) {
+    TextImage image;
+    if (utf8.empty()) return image;
+    if (!d2d_) winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory),
+                                                      nullptr, d2d_.put_void()));
+    if (!dwrite_) winrt::check_hresult(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                                                           reinterpret_cast<IUnknown**>(dwrite_.put())));
+    if (!wic_) winrt::check_hresult(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                                     IID_PPV_ARGS(wic_.put())));
+    const std::wstring text(winrt::to_hstring(utf8));
+    winrt::com_ptr<IDWriteTextFormat> format;
+    winrt::check_hresult(dwrite_->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_ITALIC,
+                                                   DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", format.put()));
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    winrt::com_ptr<IDWriteTextLayout> layout;
+    winrt::check_hresult(dwrite_->CreateTextLayout(text.c_str(), UINT32(text.size()), format.get(), 8192.0f,
+                                                   size * 2, layout.put()));
+    DWRITE_TEXT_METRICS metrics{};
+    winrt::check_hresult(layout->GetMetrics(&metrics));
+    constexpr float kPad = 4;  // Room for the italic overhang.
+    const UINT width = UINT(std::clamp(std::ceil(metrics.widthIncludingTrailingWhitespace + 2 * kPad), 1.0f, 2048.0f));
+    const UINT height = UINT(std::clamp(std::ceil(metrics.height + 2), 1.0f, 256.0f));
+    winrt::com_ptr<IWICBitmap> bitmap;
+    winrt::check_hresult(wic_->CreateBitmap(width, height, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad,
+                                            bitmap.put()));
+    winrt::com_ptr<ID2D1RenderTarget> target;
+    winrt::check_hresult(d2d_->CreateWicBitmapRenderTarget(bitmap.get(),
+        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                                     D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+        target.put()));
+    target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    winrt::com_ptr<ID2D1SolidColorBrush> brush;
+    winrt::check_hresult(target->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), brush.put()));
+    target->BeginDraw();
+    target->Clear(D2D1::ColorF(0, 0, 0, 0));
+    target->DrawTextLayout(D2D1::Point2F(kPad, 1), layout.get(), brush.get());
+    winrt::check_hresult(target->EndDraw());
+    std::vector<uint8_t> pixels(size_t(width) * height * 4);
+    winrt::check_hresult(bitmap->CopyPixels(nullptr, width * 4, UINT(pixels.size()), pixels.data()));
+    image.width = width;
+    image.height = height;
+    image.alpha.resize(size_t(width) * height);
+    for (size_t i = 0; i < image.alpha.size(); ++i) image.alpha[i] = pixels[i * 4 + 3];
+    return image;
+  }
+
+ private:
+  winrt::com_ptr<ID2D1Factory> d2d_;
+  winrt::com_ptr<IDWriteFactory> dwrite_;
+  winrt::com_ptr<IWICImagingFactory> wic_;
+};
+
 void Run() {
   winrt::init_apartment(winrt::apartment_type::multi_threaded);
+  // Scoped so its COM objects are released before the apartment closes.
+  {
+  TextRenderer renderer;
+  std::string text_key;
+  uint32_t text_id = 0;
   GlobalSystemMediaTransportControlsSessionManager manager{nullptr};
   GlobalSystemMediaTransportControlsSession session{nullptr};
   Clock::time_point next_poll{}, playing_since{}, quiet_since{};
@@ -194,6 +262,20 @@ void Run() {
         }
       }
       if (has_art) fresh.artwork = art_id;
+      const std::string text = fresh.title + '|' + fresh.artist;
+      if (text != text_key) {
+        text_key = text;
+        TextImage title, artist;
+        try {
+          title = renderer.Render(fresh.title, 40, DWRITE_FONT_WEIGHT_BOLD);
+          artist = renderer.Render(fresh.artist, 40, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        } catch (...) {}
+        ++text_id;
+        std::lock_guard lock(state_mutex);
+        title_image = std::move(title);
+        artist_image = std::move(artist);
+      }
+      fresh.text = text_id;
       if (fresh.status != logged_status || fresh.title != logged_title) {
         REXLOG_INFO("Music: {} {} - {} ({})", fresh.app.empty() ? "no session" : fresh.app,
                     int(fresh.status), fresh.title, fresh.artist);
@@ -231,6 +313,7 @@ void Run() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
+  }
   rex::audio::SetOutputGain(1.0f);
   winrt::uninit_apartment();
 }
@@ -254,6 +337,12 @@ void Stop() {
 Snapshot Current() {
   std::lock_guard lock(state_mutex);
   return snapshot;
+}
+
+void Text(TextImage& title, TextImage& artist) {
+  std::lock_guard lock(state_mutex);
+  title = title_image;
+  artist = artist_image;
 }
 
 bool Artwork(std::vector<uint8_t>& rgba) {

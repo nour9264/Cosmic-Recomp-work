@@ -775,6 +775,101 @@ namespace CosmicRecompi {
             if(found!=1)throw new InvalidDataException("Mission entry missing.");return Pack(rows);
         }
 #endif
+        // Every original Ultimate attack carries an "instakill" property
+        // (crc32 0x1ca4c331), so any hit defeats an ordinary enemy. Remove it
+        // and set Ultimate damage above the normal forms' instead: light hits
+        // 0.45 -> 0.35 (normal forms use 0.2), specials 1.0 -> 1.75.
+        static readonly string[] UltimateAttackFiles={"atk_ub.ddf","atk_ue.ddf","atk_uf.ddf","atk_uh.ddf","atk_us.ddf"};
+        static readonly string[] UltimateAttackHashes={
+            "efdfb1959300837752ca2b0233a5c19e0bad4bc802b17c87a7cd062ab6137c5b",
+            "627c17fb0646e8c44e8a56aa9a7cbe5aaff4d730fc1031b1805db8b0ef877f6b",
+            "edebecb3c166fb66e1cbc7f0ecda814f81aa3a903cb388fd412301902b9cfc87",
+            "75a1f4d3763fac20ae25c4dfc08029c7318132dcffc6dd45dd147f6fc8b04a58",
+            "91959f4e7f36d42601c98a0aeb08faeb58cf820041c5ade670083fc565757ec4"};
+        const uint Instakill=0x1ca4c331;
+        static void PutWord(byte[] b,int p,uint v){Buffer.BlockCopy(Bytes(new uint[]{v}),0,b,p,4);}
+        internal static byte[] BalanceUltimateAttacks(byte[] original) {
+            // Records are 224 bytes; word 15 is damage, word 45 counts the
+            // property pairs stored from word 46.
+            if(Read(original,0)!=0x1badbabe || (original.Length-4)%224!=0)throw new InvalidDataException("Unexpected Ultimate attack table.");
+            var data=(byte[])original.Clone();int removed=0;
+            for(int record=4;record<data.Length;record+=224) {
+                int damage=record+15*4;uint value=Read(data,damage);
+                if(value==FloatWord(0.45f))PutWord(data,damage,FloatWord(0.35f));
+                else if(value==FloatWord(1f))PutWord(data,damage,FloatWord(1.75f));
+                int count=(int)Read(data,record+45*4);
+                if(count<0 || count>5)throw new InvalidDataException("Unexpected Ultimate attack properties.");
+                var kept=new List<uint>();
+                for(int i=0;i<count;i++) {
+                    uint key=Read(data,record+(46+2*i)*4),setting=Read(data,record+(47+2*i)*4);
+                    if(key==Instakill){removed++;continue;}
+                    kept.Add(key);kept.Add(setting);
+                }
+                PutWord(data,record+45*4,(uint)(kept.Count/2));
+                for(int i=0;i<10;i++)PutWord(data,record+(46+i)*4,i<kept.Count?kept[i]:0);
+            }
+            if(removed==0)throw new InvalidDataException("Original Ultimate instakill missing.");
+            return data;
+        }
+        // Ultimate abilities originally cost no energy, so they could be used
+        // without limit. Hero Time shows the Ultimate timer on the energy bar
+        // and turns spent energy into transformation time, so give each of the
+        // four ability slots a cost in seconds of the 60-second timer, cheapest
+        // where the normal forms' own cost for that slot is lowest.
+        static readonly Dictionary<uint,float> UltimateAbilitySeconds=new Dictionary<uint,float>{
+            {0x549d5666,4f},{0x239a66f0,6f},{0xba93374a,8f},{0xcaf9c3c5,10f}};
+        const uint SpecialAttack=0x4c6b3fe3;
+        internal static byte[] AddUltimateAbilityCosts(byte[] balanced,bool clear=false) {
+            var data=(byte[])balanced.Clone();int costed=0;
+            for(int record=4;record<data.Length;record+=224) {
+                int count=(int)Read(data,record+45*4);bool special=false;
+                for(int i=0;i<count;i++)if(Read(data,record+(46+2*i)*4)==SpecialAttack)special=true;
+                float seconds;
+                if(!special || !UltimateAbilitySeconds.TryGetValue(Read(data,record+40*4),out seconds))continue;
+                if(!clear && Read(data,record+42*4)!=0)throw new InvalidDataException("Unexpected Ultimate ability cost.");
+                PutWord(data,record+42*4,clear?0:FloatWord(seconds/60f));costed++;
+            }
+            if(costed!=4)throw new InvalidDataException("Unexpected Ultimate ability slots.");
+            return data;
+        }
+#if COSMIC_HERO_TIME
+        // Earlier Hero Time builds differ from this one only in Hero Time's own
+        // authored functions; every original row must still match exactly.
+        static bool EarlierHeroTime(byte[] current,byte[] updated) {
+            List<Record> installed,expected;
+            try{installed=Parse(current);expected=Parse(updated);}catch(InvalidDataException){return false;}
+            var authored=new HashSet<uint>();
+            using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("CosmicHeroTime.bin"))
+            using(var memory=new MemoryStream()){stream.CopyTo(memory);foreach(var row in Parse(memory.ToArray()))authored.Add(row.Id);}
+            var rows=new Dictionary<uint,Record>();
+            foreach(var row in expected)if(!authored.Contains(row.Id))rows[row.Id]=row;
+            int matched=0;
+            foreach(var row in installed) {
+                if(authored.Contains(row.Id))continue;
+                Record match;
+                if(!rows.TryGetValue(row.Id,out match) || match.Args!=row.Args || Hash(match.Code)!=Hash(row.Code))return false;
+                matched++;
+            }
+            return matched==rows.Count;
+        }
+#endif
+        static void EnsureUltimateBalance(string scripts) {
+            for(int i=0;i<UltimateAttackFiles.Length;i++) {
+                string path=Path.Combine(scripts,UltimateAttackFiles[i]),backup=path+".cosmic-original";
+                byte[] original=File.ReadAllBytes(File.Exists(backup)?backup:path);
+                if(Hash(original)!=UltimateAttackHashes[i])throw new InvalidDataException("Unsupported original attack table: "+UltimateAttackFiles[i]);
+                byte[] damage=BalanceUltimateAttacks(original),updated=AddUltimateAbilityCosts(damage),current=File.ReadAllBytes(path);
+                if(Hash(current)==Hash(updated))continue;
+                // Earlier builds differ only in the ability costs written here.
+                bool earlier=false;
+                try{earlier=current.Length==damage.Length && Hash(AddUltimateAbilityCosts(current,true))==Hash(damage);}catch(InvalidDataException){}
+                if(Hash(current)!=Hash(original) && !earlier)throw new IOException("Another version modified "+UltimateAttackFiles[i]+". Import into a fresh folder.");
+                if(!File.Exists(backup))File.WriteAllBytes(backup,original);
+                string temporary=path+".cosmic-new";
+                File.WriteAllBytes(temporary,updated);
+                File.Replace(temporary,path,null);
+            }
+        }
         public static byte[] Transform(string file,byte[] original) {
 #if COSMIC_HERO_TIME
             // Private candidate only. Compose at original VM boundaries before
@@ -892,6 +987,9 @@ namespace CosmicRecompi {
             AlienAnimationStreams.Ensure(game);
 #endif
             string scripts=Path.Combine(game,"global","scripts");
+#if COSMIC_HERO_TIME
+            EnsureUltimateBalance(scripts);
+#endif
             string[] names={"globals.ds","gld_xbx.ds","circdisp.ds"};
             string[] hashes={"5bf03a8d2ce2cd8c26176139cd57aea63a15af5e6405a6449e265375ea7103c2",
                 "4c090a5b10488ddccd742adf25bc606d2a3cf3c94d5f5ae14f6df60948f09256",
@@ -915,6 +1013,9 @@ namespace CosmicRecompi {
 #if COSMIC_DISCORD_PRESENCE
                     && !(names[i]=="globals.ds" && Hash(current)=="60490e513f99dd2ecdfaa27c02ef9c98ba0f8f3b0574e0d3436a9458bbc82e36")
                     && !(names[i]=="globals.ds" && Hash(current)=="e14dc88268fd637c156f532eecd58588131c30aa6732317145c05f6c486f2b4a")
+#endif
+#if COSMIC_HERO_TIME
+                    && !(names[i]=="globals.ds" && EarlierHeroTime(current,updated))
 #endif
                 )throw new IOException("Another version modified "+names[i]+". Import into a fresh folder.");
                 replacements[path]=updated;originals[path]=original;

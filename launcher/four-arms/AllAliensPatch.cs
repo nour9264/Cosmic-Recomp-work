@@ -8,7 +8,7 @@ using System.Text;
 namespace CosmicRecompi {
     // Source for the authored program: tools/prepare_all_aliens_candidate.py.
     // Original instructions are read only from hash-verified user files.
-    internal static class AllAliensPatch {
+    internal static partial class AllAliensPatch {
         static uint Read(byte[] b,int p) {
             if(p<0 || p>b.Length-4)throw new InvalidDataException("Truncated All Aliens script.");
             return ((uint)b[p]<<24)|((uint)b[p+1]<<16)|((uint)b[p+2]<<8)|b[p+3];
@@ -76,6 +76,7 @@ namespace CosmicRecompi {
             foreach(string name in names)i.Add(0x00001b07,Crc(name),0x00281b20,3);
             return i;
         }
+        static uint CosmicFloat(double value){return BitConverter.ToUInt32(BitConverter.GetBytes((float)value),0);}
         static void ReplaceWord(byte[] code,int index,uint expected,uint value) {
             if(Read(code,index*4)!=expected)throw new InvalidDataException("Unexpected R3 roster script.");
             Buffer.BlockCopy(Bytes(new uint[]{value}),0,code,index*4,4);
@@ -433,7 +434,20 @@ namespace CosmicRecompi {
                     tick.Add(0x00000507,0x8610f32e,0x00000602,
                         0x00000207,Crc("Menu_Show"),0x02050220,1,
                         0x00010502,0x00000207,actions[i],0x01050220,1);
-                } else tick.Add(0x00000207,actions[i],0x00050220,1);
+                } else {
+                    tick.Add(0x00000207,actions[i],0x00050220,1);
+                    // Back to the title menu after a language change: rebuild it so its text is drawn anew
+                    // (the same pop-and-enter the cheat refresh uses, with the shared backdrop kept alive).
+                    PreviewNative(tick,"cosmic_language_dirty",2);
+                    tick.Add(0x00000403,0x3f800000,0x03040210);
+                    int rebuilt=tick.Fixups.Count;
+                    tick.Branch(3,0,true);
+                    tick.Add(0x00001703,0x3f800000,0x00001708,KeepCheatBackdrop,
+                        0x00000207,Crc("MenuStack_Pop"),0x00050220,1,
+                        0x00000207,Crc("MainMenuText_Enter"),0x00050220,1,
+                        0x00001701,0x00001708,KeepCheatBackdrop);
+                    tick.Fixups[rebuilt].Target=tick.Words.Count;
+                }
                 tick.Add(0x21);
                 tick.Fixups[next].Target=tick.Words.Count;
             }
@@ -809,7 +823,112 @@ namespace CosmicRecompi {
             if(found!=1)throw new InvalidDataException("Mission entry missing.");return Pack(rows);
         }
 #endif
+        // Every original Ultimate attack carries an "instakill" property
+        // (crc32 0x1ca4c331), so any hit defeats an ordinary enemy. Remove it
+        // and set Ultimate damage above the normal forms' instead: light hits
+        // 0.45 -> 0.35 (normal forms use 0.2), specials 1.0 -> 1.75.
+        static readonly string[] UltimateAttackFiles={"atk_ub.ddf","atk_ue.ddf","atk_uf.ddf","atk_uh.ddf","atk_us.ddf"};
+        static readonly string[] UltimateAttackHashes={
+            "efdfb1959300837752ca2b0233a5c19e0bad4bc802b17c87a7cd062ab6137c5b",
+            "627c17fb0646e8c44e8a56aa9a7cbe5aaff4d730fc1031b1805db8b0ef877f6b",
+            "edebecb3c166fb66e1cbc7f0ecda814f81aa3a903cb388fd412301902b9cfc87",
+            "75a1f4d3763fac20ae25c4dfc08029c7318132dcffc6dd45dd147f6fc8b04a58",
+            "91959f4e7f36d42601c98a0aeb08faeb58cf820041c5ade670083fc565757ec4"};
+        const uint Instakill=0x1ca4c331;
+        static void PutWord(byte[] b,int p,uint v){Buffer.BlockCopy(Bytes(new uint[]{v}),0,b,p,4);}
+        internal static byte[] BalanceUltimateAttacks(byte[] original) {
+            // Records are 224 bytes; word 15 is damage, word 45 counts the
+            // property pairs stored from word 46.
+            if(Read(original,0)!=0x1badbabe || (original.Length-4)%224!=0)throw new InvalidDataException("Unexpected Ultimate attack table.");
+            var data=(byte[])original.Clone();int removed=0;
+            for(int record=4;record<data.Length;record+=224) {
+                int damage=record+15*4;uint value=Read(data,damage);
+                if(value==FloatWord(0.45f))PutWord(data,damage,FloatWord(0.35f));
+                else if(value==FloatWord(1f))PutWord(data,damage,FloatWord(1.75f));
+                int count=(int)Read(data,record+45*4);
+                if(count<0 || count>5)throw new InvalidDataException("Unexpected Ultimate attack properties.");
+                var kept=new List<uint>();
+                for(int i=0;i<count;i++) {
+                    uint key=Read(data,record+(46+2*i)*4),setting=Read(data,record+(47+2*i)*4);
+                    if(key==Instakill){removed++;continue;}
+                    kept.Add(key);kept.Add(setting);
+                }
+                PutWord(data,record+45*4,(uint)(kept.Count/2));
+                for(int i=0;i<10;i++)PutWord(data,record+(46+i)*4,i<kept.Count?kept[i]:0);
+            }
+            if(removed==0)throw new InvalidDataException("Original Ultimate instakill missing.");
+            return data;
+        }
+        // Ultimate abilities originally cost no energy, so they could be used
+        // without limit. Hero Time shows the Ultimate timer on the energy bar
+        // and turns spent energy into transformation time, so give each of the
+        // four ability slots a cost in seconds of the 60-second timer, cheapest
+        // where the normal forms' own cost for that slot is lowest.
+        static readonly Dictionary<uint,float> UltimateAbilitySeconds=new Dictionary<uint,float>{
+            {0x549d5666,4f},{0x239a66f0,6f},{0xba93374a,8f},{0xcaf9c3c5,10f}};
+        const uint SpecialAttack=0x4c6b3fe3;
+        internal static byte[] AddUltimateAbilityCosts(byte[] balanced,bool clear=false) {
+            var data=(byte[])balanced.Clone();int costed=0;
+            for(int record=4;record<data.Length;record+=224) {
+                int count=(int)Read(data,record+45*4);bool special=false;
+                for(int i=0;i<count;i++)if(Read(data,record+(46+2*i)*4)==SpecialAttack)special=true;
+                float seconds;
+                if(!special || !UltimateAbilitySeconds.TryGetValue(Read(data,record+40*4),out seconds))continue;
+                if(!clear && Read(data,record+42*4)!=0)throw new InvalidDataException("Unexpected Ultimate ability cost.");
+                PutWord(data,record+42*4,clear?0:FloatWord(seconds/60f));costed++;
+            }
+            if(costed!=4)throw new InvalidDataException("Unexpected Ultimate ability slots.");
+            return data;
+        }
+#if COSMIC_HERO_TIME
+        // Earlier Hero Time builds differ from this one only in Hero Time's own
+        // authored functions; every original row must still match exactly.
+        static bool EarlierHeroTime(byte[] current,byte[] updated) {
+            List<Record> installed,expected;
+            try{installed=Parse(current);expected=Parse(updated);}catch(InvalidDataException){return false;}
+            var authored=new HashSet<uint>();
+            foreach(string resource in new[]{"CosmicHeroTime.bin","CosmicAllAliens.bin"})
+            using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
+            using(var memory=new MemoryStream()){stream.CopyTo(memory);foreach(var row in Parse(memory.ToArray()))authored.Add(row.Id);}
+            var rows=new Dictionary<uint,Record>();
+            foreach(var row in expected)if(!authored.Contains(row.Id))rows[row.Id]=row;
+            int matched=0;
+            foreach(var row in installed) {
+                if(authored.Contains(row.Id))continue;
+                Record match;
+                if(!rows.TryGetValue(row.Id,out match) || match.Args!=row.Args || Hash(match.Code)!=Hash(row.Code))return false;
+                matched++;
+            }
+            return matched==rows.Count;
+        }
+#endif
+        static void EnsureUltimateBalance(string scripts) {
+            for(int i=0;i<UltimateAttackFiles.Length;i++) {
+                string path=Path.Combine(scripts,UltimateAttackFiles[i]),backup=path+".cosmic-original";
+                byte[] original=File.ReadAllBytes(File.Exists(backup)?backup:path);
+                if(Hash(original)!=UltimateAttackHashes[i])throw new InvalidDataException("Unsupported original attack table: "+UltimateAttackFiles[i]);
+                byte[] damage=BalanceUltimateAttacks(original),updated=AddUltimateAbilityCosts(damage),current=File.ReadAllBytes(path);
+                if(Hash(current)==Hash(updated))continue;
+                // Earlier builds differ only in the ability costs written here.
+                bool earlier=false;
+                try{earlier=current.Length==damage.Length && Hash(AddUltimateAbilityCosts(current,true))==Hash(damage);}catch(InvalidDataException){}
+                if(Hash(current)!=Hash(original) && !earlier)throw new IOException("Another version modified "+UltimateAttackFiles[i]+". Import into a fresh folder.");
+                if(!File.Exists(backup))File.WriteAllBytes(backup,original);
+                string temporary=path+".cosmic-new";
+                File.WriteAllBytes(temporary,updated);
+                File.Replace(temporary,path,null);
+            }
+        }
+#if !COSMIC_VILGAX_ALIENS
+        // The Vilgax Attacks aliens bridge (launcher/vilgax) supplies these.
+        internal sealed class ImportedForm {public string Folder,Name;public int Id;}
+        static int ImportedLimit=int.MaxValue;
+        internal static List<ImportedForm> ImportedForms(string installation){return new List<ImportedForm>();}
+        internal static void EnsureImportedRecords(string game){}
+        static bool EarlierImport(byte[] current,byte[] updated,List<ImportedForm> forms){return false;}
+#endif
         public static byte[] Transform(string file,byte[] original,string fourArmsBundle) {
+            var imported=ImportedForms(Path.GetDirectoryName(fourArmsBundle));
 #if COSMIC_HERO_TIME
             // Private candidate only. Compose at original VM boundaries before
             // the independently verified All Aliens relocation.
@@ -842,7 +961,17 @@ namespace CosmicRecompi {
 #endif
             var rows=Parse(original);int patched=0;
             if(file=="globals.ds") {
-                foreach(var row in rows) if(row.Id==0x5b258dcdU) row.Code=File.ReadAllBytes(Path.Combine(fourArmsBundle,"four-arms-upgrade-init.bin"));
+                foreach(var row in rows) if(row.Id==0x5b258dcdU) {
+                    row.Code=File.ReadAllBytes(Path.Combine(fourArmsBundle,"four-arms-upgrade-init.bin"));
+                    if(imported.Count>0) {
+                        // Imported forms add their upgrade levels after the table is built.
+                        var tokens=Tokens(row.Code);int end=tokens[tokens.Count-1];
+                        if(Read(row.Code,end*4)!=0x21)throw new InvalidDataException("Unexpected upgrade table initializer.");
+                        var names=new List<string>();
+                        foreach(var form in imported)names.Add("Cosmic_"+form.Name+"_upgrades");
+                        row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{end,Hook(names.ToArray())}});
+                    }
+                }
                 foreach(var r in rows) {
                     if(r.Id==Crc("switch_form_update")){
                         int gate=-1;
@@ -858,6 +987,7 @@ namespace CosmicRecompi {
                         // The stock normal-form limit excludes the probe ID.
                         // OR in only Four Arms and retain subsequent wheel gates.
                         fourArmsWheel.Add(0x00000403,0x41980000,0x05041b10,0x06050615);
+                        foreach(var form in imported)fourArmsWheel.Add(0x00000403,FloatWord(form.Id),0x05041b10,0x06050615);
                         r.Code=Relocate(r.Code,new Dictionary<int,Injection>{
                             {34,Hook("CosmicAlienUpdate")},{gate,fourArmsWheel}});
                         patched++;
@@ -881,6 +1011,36 @@ namespace CosmicRecompi {
 #endif
             }else if(file=="gld_xbx.ds") {
                 rows=Parse(File.ReadAllBytes(Path.Combine(fourArmsBundle,"four-arms-registration.bin")));
+                if(imported.Count>0) {
+                    foreach(var row in rows) {
+                        if(row.Id==0xe1003dc4U) {
+                            // Form ID table: add name -> ID entries before it is returned.
+                            var tokens=Tokens(row.Code);int tail=tokens[tokens.Count-3];
+                            if(Read(row.Code,tail*4)!=0x00000107 || Read(row.Code,tail*4+4)!=0x6e819790)
+                                throw new InvalidDataException("Unexpected form ID table.");
+                            var entries=new Injection();
+                            foreach(var form in imported)entries.Add(0x00000107,0x6e819790,0x00000203,FloatWord(form.Id),0x00020119,Crc(form.Name));
+                            row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{tail,entries}});
+                        }
+                        if(row.Id==0x0fa12932U) {
+                            // Platform upgrade setup: add each imported form's upgrade costs.
+                            var tokens=Tokens(row.Code);int end=tokens[tokens.Count-1];
+                            if(Read(row.Code,end*4)!=0x21)throw new InvalidDataException("Unexpected upgrade cost setup.");
+                            var names=new List<string>();
+                            foreach(var form in imported)names.Add("Cosmic_"+form.Name+"_costs");
+                            row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{end,Hook(names.ToArray())}});
+                        }
+                        if(row.Id==0x4b5b4447U) {
+                            // Platform form registration: register each imported form last.
+                            var tokens=Tokens(row.Code);int end=tokens[tokens.Count-1];
+                            if(Read(row.Code,end*4)!=0x21)throw new InvalidDataException("Unexpected form registration.");
+                            var names=new List<string>();
+                            foreach(var form in imported){names.Add("Cosmic_"+form.Name+"_register");names.Add("Cosmic_"+form.Name+"_upgrades");}
+                            row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{end,Hook(names.ToArray())}});
+                        }
+                    }
+                    foreach(var form in imported)rows.AddRange(Parse(File.ReadAllBytes(Path.Combine(form.Folder,"forms.bin"))));
+                }
                 foreach(var r in rows)if(r.Id==0x66960347) {
                     if(r.Code.Length!=230*4)throw new InvalidDataException("Unexpected form input handler.");
                     var hooks=new Dictionary<int,Injection>();
@@ -916,15 +1076,25 @@ namespace CosmicRecompi {
                 byte[] blank=null;
                 foreach(var r in rows) {
                     if(r.Id==0xf5fbffb9U) {
+                        // Twelve roster ordinals (eleven stock aliens and Four Arms), then one per
+                        // alien imported from Vilgax Attacks, in form ID order.
+                        uint total=CosmicFloat(12+imported.Count);
                         ReplaceWord(r.Code,36,0x00111017,0x00001103);
-                        ReplaceWord(r.Code,37,0x39a39c8c,0x41400000);
+                        ReplaceWord(r.Code,37,0x39a39c8c,total);
                         ReplaceWord(r.Code,105,0x00111017,0x00001103);
-                        ReplaceWord(r.Code,106,0x39a39c8c,0x41400000);
-                        // Translate only the last roster ordinal to the probe's form ID.
+                        ReplaceWord(r.Code,106,0x39a39c8c,total);
+                        // Translate the roster ordinals past the stock ones to their form IDs.
                         var id=new Injection();
-                        id.Add(0x00290506,0x00002a03,0x41400000,0x2b2a0510);
-                        id.Branch(43,7,true);
-                        id.Add(0x00002903,0x41980000);
+                        id.Add(0x00290506);
+                        var ordinalForms=new List<KeyValuePair<int,int>>{new KeyValuePair<int,int>(12,19)};
+                        var importedSorted=new List<ImportedForm>(imported);
+                        importedSorted.Sort((a,b)=>a.Id.CompareTo(b.Id));
+                        for(int k=0;k<importedSorted.Count;k++)ordinalForms.Add(new KeyValuePair<int,int>(13+k,importedSorted[k].Id));
+                        foreach(var pair in ordinalForms) {
+                            id.Add(0x00002a03,CosmicFloat(pair.Key),0x2b2a0510);
+                            id.Branch(43,id.Words.Count+3,true);
+                            id.Add(0x00002903,CosmicFloat(pair.Value));
+                        }
                         ReplaceWord(r.Code,48,0x11100511,0x11102911);
                         ReplaceWord(r.Code,54,0x13120511,0x13122911);
                         ReplaceWord(r.Code,61,0x16150511,0x16152911);
@@ -998,19 +1168,15 @@ namespace CosmicRecompi {
                         r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{335,form}});
                     } else if(r.Id==0x80def930U) {
                         ReplaceWord(r.Code,4,0x000a0917,0x00000a03);
-                        ReplaceWord(r.Code,5,0x39a39c8c,0x41400000);
+                        ReplaceWord(r.Code,5,0x39a39c8c,CosmicFloat(12+imported.Count));
                         var allowed=RosterUnlockCheck(7,13);
                         allowed.Branch(13,162);
                         r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{101,allowed}});
                     }
                 }
+                // The R3 ring shows every alien as unlocked (Four Arms and Rath no longer need a cheat or
+                // progress; the stock check read the profile for form 19 and 11).
                 rows.Add(new Record{Id=Crc("CosmicRosterUnlocked"),Args=1,Code=Bytes(new uint[]{
-                    0x00000107,0x4c9c726b,0x02000118,
-                    0x00000303,0x41980000,0x04030210,0x0010041f,
-                    0x00000507,0x5976f1da,0x00060517,0x010b1e17,
-                    0x00000703,0x41980000,0x08070618,0x00000822,0x21,
-                    0x00000303,0x41300000,0x04030210,0x001a041f,
-                    0x00000507,0xc9d72aa2,0x00280520,8,0x00000822,0x21,
                     0x00010802,0x00000822,0x21
                 })});
                 foreach(var r in rows)if(r.Id==0x8f436ad3) {
@@ -1044,6 +1210,10 @@ namespace CosmicRecompi {
             AlienAnimationStreams.Ensure(game);
 #endif
             string scripts=Path.Combine(game,"global","scripts");
+#if COSMIC_HERO_TIME
+            EnsureUltimateBalance(scripts);
+#endif
+            EnsureImportedRecords(game);
             string[] names={"globals.ds","gld_xbx.ds","circdisp.ds"};
             string[] hashes={"5bf03a8d2ce2cd8c26176139cd57aea63a15af5e6405a6449e265375ea7103c2",
                 "4c090a5b10488ddccd742adf25bc606d2a3cf3c94d5f5ae14f6df60948f09256",
@@ -1060,13 +1230,36 @@ namespace CosmicRecompi {
                 if(names[i]=="globals.ds")updated=SyncLauncherGameplay(updated,true);
 #endif
                 if(Hash(current)==Hash(updated))continue;
-                if(Hash(current)!=hashes[i] && Hash(current)!=Hash(previous)
+                // Installs from before an imported form was added.
+                bool earlier=false;
+                int importedCount=ImportedForms(Path.GetDirectoryName(game)).Count;
+                try {
+                  for(int limit=0;limit<importedCount && !earlier;limit++) {
+                    ImportedLimit=limit;
+                    byte[] legacy=Transform(names[i],original,Path.Combine(Path.GetDirectoryName(game),"four-arms"));
+                    earlier=Hash(current)==Hash(legacy);
+                    if(names[i]=="circdisp.ds")legacy=CircularWheelMouseHooks(legacy);
+#if COSMIC_NATIVE_SETTINGS
+                    if(names[i]=="globals.ds")legacy=SyncLauncherGameplay(legacy,true);
+#endif
+                    earlier=earlier || Hash(current)==Hash(legacy)
+#if COSMIC_HERO_TIME
+                        || (names[i]=="globals.ds" && EarlierHeroTime(current,legacy))
+#endif
+                        ;
+                  }
+                } finally {ImportedLimit=int.MaxValue;}
+                earlier=earlier || (names[i]=="gld_xbx.ds" && EarlierImport(current,updated,ImportedForms(Path.GetDirectoryName(game))));
+                if(Hash(current)!=hashes[i] && Hash(current)!=Hash(previous) && !earlier
 #if COSMIC_ULTIMATE_VOICES
                     && !(names[i]=="globals.ds" && Hash(current)=="1c99d65b77ad414fc64fa2c890d458d0870753ec338258ecedf21bfbff00ca55")
 #endif
 #if COSMIC_DISCORD_PRESENCE
                     && !(names[i]=="globals.ds" && Hash(current)=="60490e513f99dd2ecdfaa27c02ef9c98ba0f8f3b0574e0d3436a9458bbc82e36")
                     && !(names[i]=="globals.ds" && Hash(current)=="e14dc88268fd637c156f532eecd58588131c30aa6732317145c05f6c486f2b4a")
+#endif
+#if COSMIC_HERO_TIME
+                    && !(names[i]=="globals.ds" && EarlierHeroTime(current,updated))
 #endif
                 )throw new IOException("Another version modified "+names[i]+". Import into a fresh folder.");
                 replacements[path]=updated;originals[path]=original;
@@ -1182,6 +1375,23 @@ namespace CosmicRecompi {
                 Buffer.BlockCopy(payload.ToArray(),0,result,data,(int)payload.Length);Parse(result);return result;
             }
         }
+        // An earlier import's bank: identical apart from the imported aliens' own clips.
+        static bool SameExceptClips(byte[] current,byte[] updated,HashSet<uint> clips) {
+            if(clips.Count==0)return false;
+            var rows=new Dictionary<uint,byte[]>();
+            try{foreach(var row in Parse(current))if(!rows.ContainsKey(row.Key))rows.Add(row.Key,row.Data);}
+            catch(InvalidDataException){return false;}
+            var expected=Parse(updated);int count=0;
+            foreach(var row in expected) {
+                byte[] data;
+                if(!rows.TryGetValue(row.Key,out data)){if(clips.Contains(row.Key))continue;return false;}
+                count++;
+                if(clips.Contains(row.Key))continue;
+                if(data.Length!=row.Data.Length)return false;
+                for(int i=0;i<data.Length;i++)if(data[i]!=row.Data[i])return false;
+            }
+            return count==rows.Count;
+        }
         internal static void Ensure(string game) {
             string[] forms={"ad","af","bc","ec","hm","nr","ra","sf","sm","ts","wh"};
             var archives=new List<byte[]>();foreach(string form in forms)archives.Add(File.ReadAllBytes(Path.Combine(game,"global","g_"+form+".xbx")));
@@ -1200,11 +1410,20 @@ namespace CosmicRecompi {
             var levelArchives=new List<byte[]>(archives);
             var baselineLevelArchives=new List<byte[]>(archives);
             levelArchives.Add(File.ReadAllBytes(Path.Combine(game,"global","g_fa.xbx")));
+            // Aliens imported from Vilgax Attacks stream their clips the same way.
+            var fourArmsLevelArchives=new List<byte[]>(levelArchives);
+            var importedClips=new HashSet<uint>();
+            foreach(var form in AllAliensPatch.ImportedForms(Path.GetDirectoryName(game)))
+                foreach(string package in Directory.GetFiles(form.Folder,"g_*.xbx")) {
+                    byte[] bytes=File.ReadAllBytes(Path.Combine(game,"global",Path.GetFileName(package)));
+                    levelArchives.Add(bytes);
+                    foreach(var part in Parse(bytes))if(part.Key==13)foreach(var clip in Parse(part.Data))importedClips.Add(clip.Key);
+                }
             var previousLevelArchives=new List<byte[]>(ordinaryArchives);
             var previousUltimateLevelArchives=new List<byte[]>(ultimateArchives);
             string[] residents=Directory.GetFiles(level,"g_*.xbx");Array.Sort(residents,StringComparer.Ordinal);
             foreach(string resident in residents) {
-                byte[] bytes=File.ReadAllBytes(resident);levelArchives.Add(bytes);baselineLevelArchives.Add(bytes);previousLevelArchives.Add(bytes);previousUltimateLevelArchives.Add(bytes);
+                byte[] bytes=File.ReadAllBytes(resident);levelArchives.Add(bytes);baselineLevelArchives.Add(bytes);previousLevelArchives.Add(bytes);previousUltimateLevelArchives.Add(bytes);fourArmsLevelArchives.Add(bytes);
             }
             foreach(string path in Directory.GetFiles(level,"a_*_s.xbx")) {
                 string backup=path+".cosmic-animation-original",temporary=path+".cosmic-animation-new";
@@ -1217,9 +1436,11 @@ namespace CosmicRecompi {
                     // supported upgrade, not an arbitrary third-party edit.
                     if(currentHash!=Convert.ToBase64String(hash.ComputeHash(original)) &&
                        currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,baselineLevelArchives))) &&
+                       currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,fourArmsLevelArchives))) &&
                        currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,ordinaryArchives,false))) &&
                        currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,previousLevelArchives))) &&
-                       currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,previousUltimateLevelArchives))))
+                       currentHash!=Convert.ToBase64String(hash.ComputeHash(Merge(original,previousUltimateLevelArchives))) &&
+                       !SameExceptClips(current,updated,importedClips))
                         throw new IOException("Another patch modified the animation bank: "+Path.GetFileName(path));
                 }
                 if(!File.Exists(backup))File.WriteAllBytes(backup,original);

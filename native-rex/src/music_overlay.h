@@ -32,6 +32,13 @@ class Overlay final : public rex::ui::ImGuiDialog {
   // Album art lives in its own texture; the font atlas is uploaded only once.
   std::unique_ptr<rex::ui::ImmediateTexture> art_;
   uint32_t art_id_ = 0;
+  // Title and artist as DirectWrite images, so any script displays.
+  struct Line {
+    std::unique_ptr<rex::ui::ImmediateTexture> texture;
+    float width = 0, height = 0;
+  };
+  Line title_, artist_;
+  uint32_t text_id_ = 0;
   int focus_ = 1;  // 0 previous, 1 play/pause, 2 next, 3 close, 4 ducking.
   uint16_t last_buttons_ = 0;
   bool armed_ = false;  // Ignore the keys/buttons that opened the overlay.
@@ -44,6 +51,27 @@ class Overlay final : public rex::ui::ImGuiDialog {
     if (value == Ducking(settings)) return;
     settings.priority = value;
     ben10::music::UpdateSettings(settings);
+  }
+
+  void UpdateText(uint32_t id) {
+    if (id == text_id_) return;
+    auto* immediate = immediate_ ? immediate_() : nullptr;
+    if (!immediate) return;  // Retried next frame.
+    ben10::music::TextImage title, artist;
+    ben10::music::Text(title, artist);
+    const auto upload = [&](Line& line, const ben10::music::TextImage& image) {
+      line = {};
+      if (!image.width || !image.height) return;
+      std::vector<uint8_t> rgba(image.alpha.size() * 4, 255);
+      for (size_t i = 0; i < image.alpha.size(); ++i) rgba[i * 4 + 3] = image.alpha[i];
+      line.texture = immediate->CreateTexture(image.width, image.height, rex::ui::ImmediateTextureFilter::kLinear,
+                                              false, rgba.data());
+      line.width = float(image.width);
+      line.height = float(image.height);
+    };
+    upload(title_, title);
+    upload(artist_, artist);
+    text_id_ = id;
   }
 
   void UpdateArtwork(uint32_t id) {
@@ -132,6 +160,7 @@ class Overlay final : public rex::ui::ImGuiDialog {
 
     const auto music = ben10::music::Current();
     UpdateArtwork(music.artwork);
+    UpdateText(music.text);
     const bool has_session = music.status != ben10::music::Status::none;
     const bool albedo = ben10::albedo_hud::enabled.load();
     const ImU32 accent = albedo ? IM_COL32(255, 59, 57, 255) : IM_COL32(151, 235, 40, 255);
@@ -187,11 +216,23 @@ class Overlay final : public rex::ui::ImGuiDialog {
         label("No music player detected", 20, 110, 22, white, 370);
         label("Play music in Spotify or another media app", 14, 110, 52, muted, 370);
       } else {
-        label(music.title.empty() ? "Unknown track" : music.title, 20, 110, 12, white, 375);
-        std::string detail = music.artist;
-        if (!music.app.empty()) detail += (detail.empty() ? "" : "  |  ") + music.app;
+        // A text image at the label's line height; wider lines are cropped.
+        // Returns the drawn width in panel units.
+        auto line = [&](const Line& text, float height, float x, float y, ImU32 color, float max_width) {
+          if (!text.texture) return 0.0f;
+          const float width = std::min(text.width * height / text.height, max_width);
+          const float u = width / (text.width * height / text.height);
+          draw->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(text.texture.get())), point(x, y),
+                         point(x + width, y + height), ImVec2(0, 0), ImVec2(u, 1), color);
+          return width;
+        };
+        if (!line(title_, 22, 108, 11, white, 377))
+          label(music.title.empty() ? "Unknown track" : music.title, 20, 110, 12, white, 375);
+        const float artist = line(artist_, 15, 108, 37, muted, 300);
+        std::string detail = artist ? std::string() : music.artist;
+        if (!music.app.empty()) detail += (detail.empty() && !artist ? "" : "  |  ") + music.app;
         if (music.status == ben10::music::Status::paused) detail += "  |  Paused";
-        label(detail, 14, 110, 38, muted, 375);
+        label(detail, 14, 108 + artist + (artist ? 0 : 2), 38, muted, 375 - artist);
         const float fraction = music.duration > 0 ? float(music.position / music.duration) : 0.0f;
         draw->AddRectFilled(point(110, 62), point(400, 66), dim, 2 * scale);
         draw->AddRectFilled(point(110, 62), point(110 + 290 * fraction, 66), accent, 2 * scale);

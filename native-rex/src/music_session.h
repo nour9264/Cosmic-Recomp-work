@@ -19,6 +19,13 @@ struct Snapshot {
   double position = 0, duration = 0;  // Seconds; duration 0 when unknown.
   bool can_previous = false, can_toggle = false, can_next = false;
   uint32_t artwork = 0;  // Changes whenever new album art is ready; 0 when none.
+  uint32_t text = 0;     // Changes whenever the title/artist images are redrawn.
+};
+
+// White text coverage, one byte per pixel, drawn by DirectWrite.
+struct TextImage {
+  uint32_t width = 0, height = 0;
+  std::vector<uint8_t> alpha;
 };
 
 constexpr uint32_t kArtworkSize = 128;  // Square RGBA8, center-cropped.
@@ -29,7 +36,8 @@ void Start(const std::filesystem::path& settings_file);
 void Stop();
 Snapshot Current();
 void Request(Command command);
-bool Artwork(std::vector<uint8_t>& rgba);  // kArtworkSize^2 * 4 bytes; false when none.
+bool Artwork(std::vector<uint8_t>& rgba);
+void Text(TextImage& title, TextImage& artist);  // Empty images when a line is blank.  // kArtworkSize^2 * 4 bytes; false when none.
 Settings CurrentSettings();
 void UpdateSettings(const Settings& settings);  // Saves and applies.
 void SetOverlayOpen(bool open);  // Detection also runs while the overlay is open.

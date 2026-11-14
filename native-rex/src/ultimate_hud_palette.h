@@ -3,15 +3,22 @@
 #include <atomic>
 #include <cstdint>
 
+uint64_t Ben10SubmittedFrames();
+
 namespace ben10::ultimate_hud {
 inline std::atomic<bool> active{false};
 inline thread_local uint32_t texture_key = 0;
+// Swap count when the circular HUD last drew; the Ultimate prongs follow it.
+inline std::atomic<uint64_t> dial_frame{0};
 
 // The circular HUD's foreground bind supplies the original asset key.
 // Scope it to that bind so other draws using the same texture stay original.
 class ForegroundBind {
  public:
-  explicit ForegroundBind(uint32_t key) : previous_(texture_key) { texture_key = key; }
+  explicit ForegroundBind(uint32_t key) : previous_(texture_key) {
+    texture_key = key;
+    dial_frame.store(Ben10SubmittedFrames(), std::memory_order_relaxed);
+  }
   ~ForegroundBind() { texture_key = previous_; }
 
  private:

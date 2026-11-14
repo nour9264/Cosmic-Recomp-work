@@ -184,6 +184,32 @@ for phase in (None, 0, 1, 3):
 assert meter_values == before, 'Do not overwrite original energy outside an owned timed phase'
 print('Hero Time meter: original person API receives drain/refill values only in owned timed phases.')
 
+from prepare_hero_time_candidate import LAST_ENERGY
+energy = [0.0]
+person[crc('getenergy')] = lambda *_: energy[0]
+for phase, last, current, remaining, expected in [
+        (2, None, 10.0, 40, 40),       # first owned frame: nothing to compare
+        (2, 50.0, 49.5, 40, 40),       # under threshold (regeneration, rounding)
+        (2, 50.0, 30.0, 40, 28),       # 20% of max energy -> 12 s
+        (2, 50.0, 40.0, 5, 0),         # cost beyond the timer empties it
+        (4, 50.0, 0.0, 10, 10)]:       # recharge: never charged, memory cleared
+    vm.globals[crc(PHASE)] = phase
+    vm.globals[crc(LAST_ENERGY)] = last
+    vm.globals[crc(REMAINING)] = remaining
+    energy[0] = current
+    vm.run('CosmicHeroAbilityCost')
+    assert abs(vm.globals[crc(REMAINING)] - expected) < 0.00001, (phase, last, current)
+    if phase != 2:
+        assert vm.globals[crc(LAST_ENERGY)] is None
+vm.globals[crc(PHASE)] = 2
+vm.globals[crc(REMAINING)] = 30
+vm.run('CosmicHeroMeter')
+assert abs(vm.globals[crc(LAST_ENERGY)] - 50) < 0.00001
+# From here on the model's energy is whatever the meter last wrote: no ability use.
+person[crc('getenergy')] = lambda *_: meter_values[-1]
+vm.globals[crc(LAST_ENERGY)] = None
+print('Hero Time ability cost: spent energy becomes transformation time only while Ultimate.')
+
 for phase, form in [(2, 4), (4, 14)]:
     vm.globals[crc(PHASE)] = phase
     vm.globals[crc(TARGET)] = 14
