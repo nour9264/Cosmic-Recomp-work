@@ -4,6 +4,8 @@
 #include "keyboard_mouse_runtime.h"
 #include "fov_runtime.h"
 #include "music_session.h"
+#include "menu_text.h"
+#include "text_swap.h"
 
 namespace ben10_options {
 inline std::atomic<bool> mouse_captured{false};
@@ -18,8 +20,8 @@ class VideoPage final : public rex::ui::ImGuiDialog {
   struct Row {
     const char* name;
     const char* key;
-    const char* values[5];
-    const char* labels[5];
+    const char* values[10];
+    const char* labels[10];
     int count;
   };
   static constexpr Row rows_[]={
@@ -34,7 +36,10 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     {"Sharpening",nullptr,{},{"Original","Low","Medium","High"},4},
     {"Screen Bloom",nullptr,{},{"Original","Low","Medium","High"},4},
     {"Game Monitor",nullptr,{}, {},0},
+    {"Language","language",{"en","ar","de","fr","es","it","pt","tr","ru","ja"},
+     {"English","Arabic","German","French","Spanish","Italian","Portuguese","Turkish","Russian","Japanese"},10},
   };
+  static constexpr int language_row_=11;
   static constexpr int count_=int(std::size(rows_));
   static constexpr const char* gameplay_rows_[]={
       "Invert Up / Down","Invert Left / Right","Vibration",
@@ -82,6 +87,8 @@ class VideoPage final : public rex::ui::ImGuiDialog {
     std::ifstream file(path.parent_path()/"monitor.txt");
     std::getline(file,monitor);
     values_[10]=ben10::monitors::Find(monitors_,monitor);
+    const auto language=ReadVideoSetting(path,"language","en");
+    values_[language_row_]=ben10::language::IndexOf(language);
   }
 
   void Apply() {
@@ -116,6 +123,20 @@ class VideoPage final : public rex::ui::ImGuiDialog {
         static constexpr PPCFunc* fps[]={SetPerformanceOverlay<true>,SetPerformanceOverlay<false>};
         static constexpr PPCFunc* icons[]={SetButtonIcons<Icons::Xbox>,SetButtonIcons<Icons::PlayStation>,
             SetButtonIcons<Icons::Keyboard>,SetButtonIcons<Icons::Auto>};
+        if(values[language_row_]!=saved[language_row_]) {
+          // The interface and the enhanced cinematics' subtitles follow this (the launcher sets it too).
+          ben10::language::current=values[language_row_];
+          std::lock_guard guard(video_settings_mutex);
+          SaveVideoKey(path,"language",rows_[language_row_].values[values[language_row_]]);
+          // The game's own text switches at once too: its table is rewritten in place.
+          // Scanning the game's memory takes a moment: do it off the render thread.
+          ben10::language::menus_dirty=true;
+          ben10::language::swapping=true;
+          std::thread([host,language=values[language_row_]] {
+            ben10::text_swap::Apply(host,language);
+            ben10::language::swapping=false;
+          }).detach();
+        }
         if(values[1]!=saved[1])rates[values[1]](context,nullptr);
         if(values[2]!=saved[2])fps[values[2]](context,nullptr);
         if(values[4]!=saved[4])icons[values[4]](context,nullptr);
@@ -274,7 +295,8 @@ class VideoPage final : public rex::ui::ImGuiDialog {
       };
       // The SDK uploads the legacy font atlas once. Requesting new font
       // sizes during a draw can rebuild that atlas while the presenter uses it.
-      auto label=[&](const char* value,float size,float x,float y,ImU32 color,bool centered=false){
+      auto label=[&](const char* english,float size,float x,float y,ImU32 color,bool centered=false){
+        const char* value=ben10::menu_text::Tr(english);  // The chosen language (Arabic shaped).
         const auto extent=ImGui::CalcTextSize(value);
         if(extent.y<=0)return;
         const float stretch=size*scale/extent.y;
@@ -379,7 +401,7 @@ class VideoPage final : public rex::ui::ImGuiDialog {
       }
       for(int i=0;!is_hub && i<row_count;++i) {
         ImGui::PushID(i);
-        const float y=is_sound?176+i*50.0f:is_gameplay?176+i*42.0f:154+i*39.0f;
+        const float y=is_sound?176+i*50.0f:is_gameplay?176+i*42.0f:154+i*36.0f;
         if(!confirm_wipe_ && hit("row",160,y,635,35,i)) {
           selected_=i;
           if(is_gameplay && i==controls_row_)controls_editor_.Open(host->user_data_root());
@@ -516,7 +538,7 @@ std::string(values_[i]?"On":"Off");
         }
       }
       if(!is_hub)label(is_gameplay?(confirm_wipe_?"Reset saved progress? Backup kept.":"Left / Right to change  |  Select to apply"):
-            (!is_sound && selected_>=5 && selected_<10?"Select to save  |  Applies after restart":"Left / Right to change  |  Select to apply"),
+            (!is_sound && ((selected_>=5 && selected_<10))?"Select to save  |  Applies after restart":"Left / Right to change  |  Select to apply"),
             17,640,633,white,true);
       draw->Flags=draw_flags;
     }

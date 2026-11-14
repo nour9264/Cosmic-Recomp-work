@@ -29,16 +29,22 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
     $expected = @{}
+    # Optional translated subtitle tracks: <clip>.subtitles.<language>.tsv, chosen by the game's language.
+    $optional = @{}
     foreach ($clip in $clips) {
         $expected.Add($clip + '.wmv', $true)
         $expected.Add($clip + '.subtitles.tsv', $true)
+        foreach ($language in 'ar','de','fr','es','it','pt','tr','ru','ja') {
+            $optional.Add($clip + '.subtitles.' + $language + '.tsv', $true)
+        }
     }
     $entries = @{}
     $legacyIntroSubtitle = $null
     foreach ($entry in $zip.Entries) {
         $name = $entry.FullName.Replace('\','/')
         if ($name.StartsWith('cinematics/')) { $name = $name.Substring(11) }
-        if ($name -eq '' -or $name -match '^l_[a-z]+/$') { continue }
+        # A pack zipped straight from an installed cinematics folder carries the importer's own marker.
+        if ($name -eq '' -or $name -match '^l_[a-z]+/$' -or $name -ceq '.cosmic-cinematics-pack') { continue }
         # Older packs included a second copy of this subtitle at the pack root.
         if ($name -ceq 'romd_a.subtitles.tsv') {
             if ($legacyIntroSubtitle -or $entry.Length -le 0 -or $entry.Length -gt 128KB) { exit 2 }
@@ -46,12 +52,12 @@ try {
             continue
         }
         $key = if ($name.EndsWith('.mp4')) { $name.Substring(0, $name.Length - 4) + '.wmv' } else { $name }
-        if (!$expected.ContainsKey($key) -or $entries.ContainsKey($key)) { exit 2 }
+        if ((!$expected.ContainsKey($key) -and !$optional.ContainsKey($key)) -or $entries.ContainsKey($key)) { exit 2 }
         $limit = if ($key.EndsWith('.wmv')) { 768MB } else { 128KB }
         if ($entry.Length -le 0 -or $entry.Length -gt $limit) { exit 2 }
         $entries.Add($key, @{ Name = $name; Entry = $entry })
     }
-    if ($entries.Count -ne $expected.Count) { exit 2 }
+    foreach ($key in $expected.Keys) { if (!$entries.ContainsKey($key)) { exit 2 } }
     if ($legacyIntroSubtitle) {
         $canonical = $entries['l_romd/romd_a.subtitles.tsv'].Entry
         if ($legacyIntroSubtitle.Length -ne $canonical.Length) { exit 2 }
@@ -70,7 +76,7 @@ try {
     $code = 3
     $stage = Join-Path $install ('cinematics-import-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($stage)
-    foreach ($key in $expected.Keys) {
+    foreach ($key in @($entries.Keys)) {
         $name = $entries[$key].Name
         $entry = $entries[$key].Entry
         $dest = Join-Path $stage $name

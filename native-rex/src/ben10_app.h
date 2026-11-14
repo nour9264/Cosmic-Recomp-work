@@ -24,9 +24,11 @@
 #include "diagnostic_paths.h"
 #include "cinematic_player.h"
 #include "cinematic_subtitles.h"
+#include "og_text_overlay.h"
 #include "keyboard_mouse_runtime.h"
 #include "fov_runtime.h"
 #include "music_overlay.h"
+#include "ultimate_hud_overlay.h"
 #include "menu_cursor.h"
 #include <rex/input/input_system.h>
 #include <rex/input/mnk/mnk_input_driver.h>
@@ -37,6 +39,29 @@ class Ben10App : public rex::ReXApp {
   using rex::ReXApp::ReXApp;
 
   void OnConfigureFonts(ImFontAtlas* atlas) override {
+    {
+      // Subtitle face: Segoe UI with Arabic (Arial) and Japanese system fonts merged in, baked for the
+      // alphabets of the supported languages.
+      char system[MAX_PATH]{};
+      if(GetWindowsDirectoryA(system,MAX_PATH)) {
+        const auto fonts=std::filesystem::path(system)/"Fonts";
+        if(std::filesystem::exists(fonts/"segoeui.ttf")) {
+          static const ImWchar extra[]={0x0100,0x024F,0x0600,0x06FF,0xFB50,0xFDFF,0xFE70,0xFEFF,0};
+          static ImVector<ImWchar> ranges;
+          ImFontGlyphRangesBuilder builder;
+          builder.AddRanges(atlas->GetGlyphRangesDefault());
+          builder.AddRanges(atlas->GetGlyphRangesCyrillic());
+          builder.AddRanges(atlas->GetGlyphRangesJapanese());
+          builder.AddRanges(extra);
+          builder.BuildRanges(&ranges);
+          subtitle_font_=atlas->AddFontFromFileTTF((fonts/"segoeui.ttf").string().c_str(),28,nullptr,ranges.Data);
+          ImFontConfig merge;merge.MergeMode=true;
+          if(std::filesystem::exists(fonts/"arial.ttf"))atlas->AddFontFromFileTTF((fonts/"arial.ttf").string().c_str(),28,&merge,ranges.Data);
+          for(const char* face:{"YuGothM.ttc","meiryo.ttc","msgothic.ttc"})
+            if(std::filesystem::exists(fonts/face)){atlas->AddFontFromFileTTF((fonts/face).string().c_str(),28,&merge,ranges.Data);break;}
+        }
+      }
+    }
     if(!ben10_pc_menu::enabled())return;
     const auto user=std::filesystem::current_path()/"user";
     char windows[MAX_PATH]{};
@@ -45,7 +70,29 @@ class Ben10App : public rex::ReXApp {
       const auto italic=fonts/"segoeuiz.ttf";
       const auto font=std::filesystem::exists(italic)?italic:fonts/"segoeuib.ttf";
       // One baked face at a higher resolution. UI draws only transform quads.
-      if(std::filesystem::exists(font))pc_video_font_=atlas->AddFontFromFileTTF(font.string().c_str(),42);
+      if(std::filesystem::exists(font)) {
+        // Every character the pages show in any language (Arabic as its joined forms) is baked in once.
+        static ImVector<ImWchar> menu_ranges;
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(atlas->GetGlyphRangesDefault());
+        builder.AddText(ben10::menu_text::AllText().c_str());
+        // The original menus' translated lines (Arabic as its joined forms), from the overlay table and the
+        // per-language game text tables.
+        for(const auto& row:ben10::text_overlay::Rows())
+          for(int column=1;column<4;++column)
+            builder.AddText(column==1?arabic::Visual(row[column]).c_str():row[column]);
+        ben10::text_overlay::UserDirectory()=user;
+        for(const char* code:{"ru","ja","ar"})
+          ben10::text_overlay::ReadTranslations(code,[&](uint64_t,const std::string& text) {
+            builder.AddText((std::string(code)=="ar"?arabic::Visual(text):text).c_str());
+          });
+        builder.BuildRanges(&menu_ranges);
+        pc_video_font_=atlas->AddFontFromFileTTF(font.string().c_str(),42,nullptr,menu_ranges.Data);
+        ImFontConfig merge;merge.MergeMode=true;
+        if(std::filesystem::exists(fonts/"arial.ttf"))atlas->AddFontFromFileTTF((fonts/"arial.ttf").string().c_str(),42,&merge,menu_ranges.Data);
+        for(const char* face:{"YuGothM.ttc","meiryo.ttc","msgothic.ttc"})
+          if(std::filesystem::exists(fonts/face)){atlas->AddFontFromFileTTF((fonts/face).string().c_str(),42,&merge,menu_ranges.Data);break;}
+      }
     }
     constexpr int size=128, bytes=size*size*4;
     std::vector<unsigned char> badge(bytes*2);
@@ -114,12 +161,14 @@ class Ben10App : public rex::ReXApp {
     std::string subtitle_mode;
     preference >> subtitle_mode;
     if (subtitle_mode != "off")
-      cinematic_subtitles_ = std::make_unique<Ben10CinematicSubtitles>(drawer);
+      cinematic_subtitles_ = std::make_unique<Ben10CinematicSubtitles>(drawer,subtitle_font_);
+    og_text_=std::make_unique<Ben10OgText>(drawer,pc_video_font_?pc_video_font_:subtitle_font_);
     if(ben10_pc_menu::enabled())options_video_=std::make_unique<ben10_options::VideoPage>(drawer,pc_video_font_,options_badges_);
     // Profiling/replay tools keep their own measurements; ordinary play gets
     // a passive overlay driven by the original game's swap counter.
     if((!std::getenv("BEN10_REPLAY_INPUT_PATH") || std::getenv("BEN10_TEST_PERFORMANCE_OVERLAY")) && !std::getenv("BEN10_HIDE_PERFORMANCE_OVERLAY"))
       performance_overlay_=std::make_unique<Ben10PerformanceOverlay>(drawer);
+    ultimate_prongs_=std::make_unique<ben10::ultimate_hud::Prongs>(drawer);
     if(ben10_pc_menu::enabled())
       music_overlay_=std::make_unique<ben10::music_overlay::Overlay>(drawer,pc_video_font_,options_badges_,[this]{return immediate_drawer();});
     if(menu_cursor_sprite_!=ImFontAtlasRectId_Invalid)
@@ -569,6 +618,7 @@ class Ben10App : public rex::ReXApp {
     options_video_.reset();
     menu_cursor_.reset();
     performance_overlay_.reset();
+    ultimate_prongs_.reset();
     cinematic_subtitles_.reset();
     if (capture_worker_.joinable()) { capture_worker_.request_stop();capture_worker_.join(); }
   }
@@ -595,11 +645,14 @@ class Ben10App : public rex::ReXApp {
   std::unique_ptr<ben10_options::VideoPage> options_video_;
   std::unique_ptr<ben10::music_overlay::Overlay> music_overlay_;
   ImFont* pc_video_font_=nullptr;
+  ImFont* subtitle_font_=nullptr;
   std::array<ImFontAtlasRectId,2> options_badges_{ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid};
   std::unique_ptr<Ben10PerformanceOverlay> performance_overlay_;
+  std::unique_ptr<ben10::ultimate_hud::Prongs> ultimate_prongs_;
   ImFontAtlasRectId menu_cursor_sprite_=ImFontAtlasRectId_Invalid;
   ImFontAtlasRectId menu_cursor_albedo_sprite_=ImFontAtlasRectId_Invalid;
   std::unique_ptr<ben10::MenuCursor> menu_cursor_;
   std::unique_ptr<Ben10CinematicSubtitles> cinematic_subtitles_;
+  std::unique_ptr<Ben10OgText> og_text_;
   std::jthread capture_worker_;
 };

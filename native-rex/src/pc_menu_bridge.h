@@ -2,6 +2,8 @@
 // Original-menu integration, enabled by the launcher's handoff event or an
 // explicit private diagnostic. No host popup replaces the game's menu.
 // Registration uses the existing game script registry and SDK thunk allocator.
+#include "language_setting.h"
+#include "text_overlay.h"
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/thread_state.h>
@@ -9,6 +11,7 @@
 #include <rex/ui/window.h>
 #include <rex/ppc.h>
 #include <atomic>
+#include <thread>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
@@ -328,6 +331,29 @@ template<ben10::albedo_textures::ButtonIcons Mode> void SetButtonIcons(PPCContex
     ben10::albedo_textures::button_icons=Mode;
     REXLOG_INFO("Cosmic native VIDEO: button_icons={}",mode);
   }catch(const std::exception& error){REXLOG_ERROR("Cosmic button icons failed: {}",error.what());}
+}
+// Asked by the Options "Back" script: after a language change the title menu is rebuilt (the pause menu
+// is built fresh each time it opens, and a running level is never touched).
+inline void LanguageDirty(PPCContext& ctx,uint8_t* base) {
+  // The title menu is rebuilt from the new text, so wait for the rewrite to finish.
+  for(int i=0;i<400 && ben10::language::swapping.load();++i)Sleep(5);
+  const bool dirty=ben10::language::menus_dirty.exchange(false);
+  ReturnNumber(ctx,base,dirty && !mission_active.load() && !pause_menu_active.load()?1.0f:0.0f);
+}
+inline void ReadLanguage(PPCContext& ctx,uint8_t* base) {
+  ReturnNumber(ctx,base,float(ben10::language::current.load()));
+}
+inline void CycleLanguage(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  auto* host=runtime.load();
+  const int next=(ben10::language::current.load()+1)%ben10::language::kCount;
+  ben10::language::current=next;
+  if(!host)return;
+  try {
+    std::lock_guard guard(video_settings_mutex);
+    SaveVideoKey(host->user_data_root()/"pc-video.ini","language",ben10::language::kCodes[next]);
+    REXLOG_INFO("Cosmic native VIDEO: language={}",ben10::language::kCodes[next]);
+  }catch(const std::exception& error){REXLOG_ERROR("Cosmic language failed: {}",error.what());}
 }
 struct GraphicsSetting {
   const char* key;
@@ -818,6 +844,9 @@ inline void OnFrame() {
   add("cosmic_cycle_filter",CycleGraphics<2>);
   add("cosmic_cycle_sharpen",CycleGraphics<3>);
   add("cosmic_cycle_bloom",CycleGraphics<4>);
+  add("cosmic_index_language",ReadLanguage);
+  add("cosmic_language_dirty",LanguageDirty);
+  add("cosmic_cycle_language",CycleLanguage);
   add("cosmic_set_unlimited",SetVideo<-1,0>);
   add("cosmic_overlay_on",SetPerformanceOverlay<true>);
   add("cosmic_overlay_off",SetPerformanceOverlay<false>);
@@ -832,6 +861,18 @@ inline void OnFrame() {
   const auto iconMode=ReadVideoSetting(host->user_data_root()/"pc-video.ini","button_icons","xbox");
   for(int i=0;i<4;++i)
     if(iconMode==ButtonIconNames[i])ben10::albedo_textures::button_icons=static_cast<ButtonIcons>(i);
+  ben10::text_overlay::UserDirectory()=host->user_data_root();
+  // Temporary: Big Chill's glide landing calls a virtual function at 0x8211A5B8 that code discovery missed.
+  // Log its original instructions (and its neighbours) from the loaded image.
+  std::thread([host] {
+    Sleep(15000);
+    uint8_t* guest=host->memory()->virtual_membase();
+    for(uint32_t at=0x8211A5A8;at<0x8211A5E8;at+=16) {
+      uint32_t w[4];std::memcpy(w,guest+at,16);
+      REXLOG_INFO("Guest code {:08X}: {:08X} {:08X} {:08X} {:08X}",at,_byteswap_ulong(w[0]),_byteswap_ulong(w[1]),_byteswap_ulong(w[2]),_byteswap_ulong(w[3]));
+    }
+  }).detach();
+  ben10::language::current=ben10::language::IndexOf(ReadVideoSetting(host->user_data_root()/"pc-video.ini","language","en"));
   add("cosmic_wipe_progress",WipeProgress);
   add("cosmic_wipe_prompt",WipePrompt);
   {std::ifstream settings(host->user_data_root()/"pc-video.ini");std::string line;

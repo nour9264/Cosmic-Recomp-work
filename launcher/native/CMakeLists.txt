@@ -33,5 +33,6 @@ set_source_files_properties(../cosmic_icon.rc PROPERTIES
 set_source_files_properties(../artwork.rc PROPERTIES
   OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../artwork/home.png;${CMAKE_CURRENT_SOURCE_DIR}/../artwork/settings.png")
 target_include_directories(CosmicRecomp PRIVATE "${IMGUI}" "${RUI_ROOT}/src")
+target_compile_options(CosmicRecomp PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 target_compile_definitions(CosmicRecomp PRIVATE LNG_SDL3=1 SDL_MAIN_HANDLED UNICODE _UNICODE NOMINMAX)
 target_link_libraries(CosmicRecomp PRIVATE SDL3::SDL3 opengl32 comdlg32 crypt32 ole32 windowscodecs)

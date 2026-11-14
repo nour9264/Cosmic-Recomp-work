@@ -1,4 +1,6 @@
 #include "cinematic_player.h"
+#include "arabic_shaping.h"
+#include "language_setting.h"
 
 #include <windows.h>
 #include <audiopolicy.h>
@@ -486,6 +488,12 @@ void Begin(uint32_t caller, uint32_t movie) {
     subtitle_displayed = false;
     auto subtitle_path = candidate;
     subtitle_path.replace_extension(".subtitles.tsv");
+    // A translation for the chosen language (<clip>.subtitles.<code>.tsv) replaces the default track.
+    if (ben10::language::current.load() != 0) {
+        auto translated = candidate;
+        translated.replace_extension(std::string(".subtitles.") + ben10::language::Code() + ".tsv");
+        if (std::filesystem::is_regular_file(translated, error)) subtitle_path = translated;
+    }
     std::ifstream file(subtitle_path);
     SubtitleCue cue{};
     while (subtitles.size() < 256 && file >> cue.start >> cue.end) {
@@ -497,6 +505,8 @@ void Begin(uint32_t caller, uint32_t movie) {
         }
         subtitles.push_back(cue);
     }
+    if (ben10::language::current.load() == 1)
+        for (auto& shown : subtitles) shown.text = arabic::Visual(shown.text);
     ++generation;
     const auto selected_clip = candidate.lexically_relative(enhanced_root).generic_string();
     std::fprintf(stderr, "[cinematic-pc] opening: %s\n", selected_clip.c_str());

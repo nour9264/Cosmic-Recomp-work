@@ -7,14 +7,14 @@
 
 class Ben10CinematicSubtitles final : public rex::ui::ImGuiDialog {
 public:
-    explicit Ben10CinematicSubtitles(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
+    Ben10CinematicSubtitles(rex::ui::ImGuiDrawer* drawer, ImFont* font = nullptr) : ImGuiDialog(drawer), font_(font) {}
     bool NeedsContinuousRepaint() override { return false; }
 protected:
     void OnDraw(ImGuiIO& io) override {
         const auto text = ben10::cinematic_player::CurrentSubtitle();
         if (text.empty()) return;
         const float font_size = io.DisplaySize.y * .029f;
-        auto* font = ImGui::GetFont();
+        auto* font = font_ ? font_ : ImGui::GetFont();
         const float wrap_width = io.DisplaySize.x * .8f;
         const auto size = font->CalcTextSizeA(font_size, 100000, wrap_width, text.c_str());
         const float x = (io.DisplaySize.x - size.x) * .5f;
@@ -25,4 +25,6 @@ protected:
         draw->AddText(font, font_size, ImVec2(x,y), IM_COL32_WHITE, text.c_str(),
                       nullptr, wrap_width);
     }
+private:
+    ImFont* font_;  // Latin plus the Cyrillic, Arabic and Japanese glyphs of the translated tracks
 };

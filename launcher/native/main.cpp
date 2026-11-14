@@ -22,12 +22,49 @@
 #include "../../native-rex/src/keyboard_mouse_controls.h"
 #include "../../native-rex/src/fov_setting.h"
 #include "../../native-rex/src/music_settings.h"
+#include "launcher_languages.h"
 
 namespace fs = std::filesystem;
 static fs::path root;
 static std::string read(const fs::path& path) {
     std::ifstream file(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(file), {});
+}
+static const char* T(const char* english) { return launcher_lang::Tr(english); }
+static std::string items(std::initializer_list<const char*> list) {
+    std::string joined;
+    for (const char* item : list) { joined += T(item); joined.push_back('\0'); }
+    joined.push_back('\0');
+    return joined;
+}
+static fs::path language_file() { return root / "launcher-language.txt"; }
+static fs::path installation();
+// The language also lives in pc-video.ini (key `language`), which the game reads for its menu and subtitles.
+static void save_language_key(const char* code) {
+    const auto path = installation() / "user/pc-video.ini";
+    std::error_code error;
+    fs::create_directories(path.parent_path(), error);
+    auto temporary = path;
+    temporary += L".language.tmp";
+    {
+        std::ifstream previous(path);
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        for (std::string line; std::getline(previous, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.rfind("language=", 0) != 0) file << line << '\n';
+        }
+        file << "language=" << code << '\n';
+    }
+    MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+static std::string read_language_key() {
+    std::ifstream file(installation() / "user/pc-video.ini");
+    std::string code;
+    for (std::string line; std::getline(file, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("language=", 0) == 0) code = line.substr(9);
+    }
+    return code;
 }
 static fs::path installation() {
     std::string chosen = read(root / "installation-path.txt");
@@ -155,6 +192,12 @@ static bool has_four_arms() {
     }
     return true;
 }
+static bool has_alien_force() {
+    const auto directory = installation()/"vilgax";
+    for (const char* alien : {"chromastone/g_cs.xbx", "jetray/g_jr.xbx", "goop/g_gp.xbx"})
+        if (!nonempty_file(directory/alien)) return false;
+    return true;
+}
 static bool has_cinematics_pack(bool requireMp4 = false) {
     const auto directory = installation()/"cinematics";
     for (const wchar_t* clip : cinematic_clips) {
@@ -226,6 +269,12 @@ static bool spawn(const wchar_t* action) {
     auto fourArmsBridge = root / "CosmicFourArmsBridge.exe";
     if (std::wstring(action) == L"play" && has_four_arms() && fs::exists(fourArmsBridge))
         bridge = fourArmsBridge;
+    // Aliens imported from Vilgax Attacks have their own bridge (it also
+    // installs Four Arms, whose form registration they build on).
+    auto vilgaxBridge = root / "CosmicVilgaxBridge.exe";
+    if (std::wstring(action) == L"play" && has_four_arms() && fs::exists(vilgaxBridge) &&
+        fs::is_directory(installation() / "vilgax"))
+        bridge = vilgaxBridge;
     std::wstring command = L"\"" + bridge.wstring() + L"\" " + action;
     if(std::wstring(action)==L"play")command+=L" --parent "+std::to_wstring(GetCurrentProcessId());
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
@@ -325,13 +374,43 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
     io.IniFilename = nullptr; io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     // Load the OS font read-only; all writable state remains beside the launcher.
     wchar_t windows[MAX_PATH]; GetWindowsDirectoryW(windows, MAX_PATH);
-    fs::path font = fs::path(windows) / "Fonts/segoeui.ttf";
-    io.Fonts->AddFontFromFileTTF(font.u8string().c_str(), 19);
-    fs::path bold = fs::path(windows) / "Fonts/segoeuib.ttf";
-    ImFont* heading = io.Fonts->AddFontFromFileTTF(bold.u8string().c_str(), 76);
-    ImFont* compactHeading = io.Fonts->AddFontFromFileTTF(bold.u8string().c_str(), 55);
-    ImFont* subtitle = io.Fonts->AddFontFromFileTTF(bold.u8string().c_str(), 38);
-    ImFont* primaryLabel = io.Fonts->AddFontFromFileTTF(bold.u8string().c_str(), 26);
+    // Every character any language can show (Arabic as its joined forms) is baked in once, so
+    // switching language never rebuilds the font atlas.
+    static ImVector<ImWchar> glyphs;
+    {
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+        for (int l = 0; l < launcher_lang::Count; ++l) {
+            builder.AddText(launcher_lang::LanguageName(l));
+            for (const auto& entry : launcher_lang::Entries())
+                builder.AddText(launcher_lang::Tr(entry.en, launcher_lang::Language(l)));
+        }
+        builder.BuildRanges(&glyphs);
+    }
+    auto font_file = [&](const char* name) { return (fs::path(windows) / "Fonts" / name).u8string(); };
+    auto add_font = [&](float size, bool boldFace) {
+        ImFont* base = io.Fonts->AddFontFromFileTTF(font_file(boldFace ? "segoeuib.ttf" : "segoeui.ttf").c_str(), size, nullptr, glyphs.Data);
+        ImFontConfig merge; merge.MergeMode = true;
+        // Arabic joined forms and Japanese come from system fonts that have them.
+        const std::vector<const char*> faces = boldFace ?
+            std::vector<const char*>{"arialbd.ttf", "YuGothB.ttc", "meiryob.ttc", "msgothic.ttc"} :
+            std::vector<const char*>{"arial.ttf", "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"};
+        bool japanese = false;
+        for (const char* face : faces) {
+            std::error_code error;
+            if (!fs::exists(fs::path(windows) / "Fonts" / face, error)) continue;
+            const bool isJapanese = std::string(face).find("arial") == std::string::npos;
+            if (isJapanese && japanese) continue;
+            io.Fonts->AddFontFromFileTTF(font_file(face).c_str(), size, &merge, glyphs.Data);
+            japanese |= isJapanese;
+        }
+        return base;
+    };
+    add_font(19, false);
+    ImFont* heading = add_font(76, true);
+    ImFont* compactHeading = add_font(55, true);
+    ImFont* subtitle = add_font(38, true);
+    ImFont* primaryLabel = add_font(26, true);
     ImGui::StyleColorsDark(); auto& style = ImGui::GetStyle();
     style.WindowRounding = 0; style.ChildRounding = 14; style.FrameRounding = 8;
     style.TabRounding = 7; style.FramePadding = ImVec2(14, 9);
@@ -369,6 +448,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
         factory.Reset();
         if (SUCCEEDED(com)) CoUninitialize();
     }
+    const bool savesFirst = std::wstring(args).find(L"--saves-tab") != std::wstring::npos;  // Preview aid
     bool quit = false, settings = std::wstring(args).find(L"--settings") != std::wstring::npos; int frames = 0;
     int resolution = 0, rate = 0, displayMode=0;
     int internalResolution=-1, antiAliasing=-1, textureFiltering=-1, sharpening=0, screenBloom=0;
@@ -378,6 +458,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
     bool cinematicsAvailable = has_cinematics_pack();
     bool mp4PackAvailable = has_cinematics_pack(true);
     bool fourArmsAvailable = has_four_arms();
+    bool alienForceAvailable = has_alien_force();
     bool skipIntro = read(installation()/"user/skip-intro.txt") == "on";
     {
         std::ifstream file(installation()/"user/pc-video.ini"); std::string line, legacyPreset;
@@ -413,6 +494,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
     int monitor=ben10::monitors::Find(monitors,read(installation()/"user/monitor.txt"));
     ben10::controls::Editor controlsEditor;
     Uint64 nextStatusRead=0;
+    Uint64 nextLanguageRead=0;
+    {
+        std::string code = read_language_key();
+        if (code.empty()) code = read(language_file());
+        while (!code.empty() && (code.back() == '\r' || code.back() == '\n' || code.back() == ' ')) code.pop_back();
+        for (int l = 0; l < launcher_lang::Count; ++l)
+            if (code == launcher_lang::kCodes[l]) launcher_lang::Current() = launcher_lang::Language(l);
+    }
     if(ready())status="Ready to play.";
     while (!quit) {
         SDL_Event event;
@@ -429,6 +518,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                 cinematicsAvailable = has_cinematics_pack();
                 mp4PackAvailable = has_cinematics_pack(true);
                 fourArmsAvailable = has_four_arms();
+                alienForceAvailable = has_alien_force();
                 SDL_ShowWindow(window); SDL_RaiseWindow(window);
                 if (importingCinematics) {
                     importingCinematics = false;
@@ -444,6 +534,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                 auto update = read(root / "launcher-status.txt");
                 if (!update.empty()) status = update;
             }
+        }
+        // The game's Video menu changes the same setting; follow it while the launcher is open.
+        if (SDL_GetTicks() >= nextLanguageRead) {
+            nextLanguageRead = SDL_GetTicks() + 500;
+            const std::string code = read_language_key();
+            for (int l = 0; l < launcher_lang::Count; ++l)
+                if (code == launcher_lang::kCodes[l]) launcher_lang::Current() = launcher_lang::Language(l);
         }
         if (game) { SDL_Delay(50); continue; } // No UI rendering/animation cost during gameplay.
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL3_NewFrame(); ImGui::NewFrame();
@@ -477,15 +574,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
         const float menuWidth = settings ? std::min(700.f,size.x-margin*2) : std::min(366.f,size.x*.50f);
         const bool compact = size.y < 660 || size.x < 820;
         const float titleTop = settings ? 33.f : std::clamp((footer-425.f)*.47f, 22.f, 132.f);
+        const std::string controlPanelTitle = std::string("COSMIC RECOMP  /  ") + T("CONTROL PANEL");  // brand stays first, as in English
         ImGui::SetCursorPos(ImVec2(margin,titleTop));
-        ImGui::TextColored(accent, "%s", settings ? "COSMIC RECOMP  /  CONTROL PANEL" : "BEN 10  /  ULTIMATE ALIEN");
+        ImGui::TextColored(accent, "%s", settings ? controlPanelTitle.c_str() : "BEN 10  /  ULTIMATE ALIEN");
         const ImVec2 rule = ImGui::GetCursorScreenPos();
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(margin,rule.y), ImVec2(margin+66,rule.y+3),
             ImGui::ColorConvertFloat4ToU32(accent), 1.5f);
         ImGui::Dummy(ImVec2(1,3));
         ImGui::SetCursorPosX(margin);
         ImGui::PushFont(settings ? subtitle : compact ? compactHeading : heading);
-        ImGui::TextUnformatted(settings ? "Launcher settings" : "COSMIC\nRECOMP");
+        ImGui::TextUnformatted(settings ? T("Launcher settings") : "COSMIC\nRECOMP");
         ImGui::PopFont();
         if (!settings) {
             ImGui::SetCursorPosX(margin);
@@ -498,11 +596,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
             ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(indicator.x+5,indicator.y+ImGui::GetTextLineHeight()*.5f),
                 4.5f, installed ? IM_COL32(161,244,49,255) : IM_COL32(225,184,83,255));
             ImGui::SetCursorPosX(margin+19);
-            ImGui::TextColored(muted, "%s", installed ? "Ready to play" : "Setup required");
+            ImGui::TextColored(muted, "%s", installed ? T("Ready to play") : T("Setup required"));
             ImGui::SetCursorPosX(margin);
             ImGui::BeginDisabled(worker.hProcess != nullptr);
             ImGui::PushFont(primaryLabel);
-            const bool play = action_button("Play", menuWidth, true);
+            const bool play = action_button(T("Play"), menuWidth, true);
             ImGui::PopFont();
             ImGui::SetItemDefaultFocus();
             if (play) {
@@ -516,36 +614,46 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
             ImGui::SetCursorPosX(margin);
             const float secondaryWidth = (menuWidth-style.ItemSpacing.x)*.5f;
             ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.f);
-            if (action_button("Settings", secondaryWidth)) settings = true;
+            if (action_button(T("Settings"), secondaryWidth)) settings = true;
             ImGui::SameLine();
-            if (action_button("Quit", secondaryWidth)) quit = true;
+            if (action_button(T("Quit"), secondaryWidth)) quit = true;
             ImGui::PopStyleVar();
             ImGui::EndDisabled();
         } else {
             ImGui::BeginChild("menu", ImVec2(menuWidth, footer-menuTop-18), ImGuiChildFlags_Borders);
             ImGui::BeginDisabled(worker.hProcess != nullptr);
-            if (ImGui::Button("Back")) settings=false;
+            if (ImGui::Button(T("Back"))) settings=false;
             ImGui::Spacing();
             if (ImGui::BeginTabBar("Settings tabs")) {
-                if (ImGui::BeginTabItem("Setup")) {
+                if (ImGui::BeginTabItem((std::string(T("Setup"))+"###setup").c_str())) {
                     ImGui::Spacing();
-                    ImGui::SeparatorText("Game files");
-                    if (ImGui::Button("Select ISO")) spawn(L"select-iso");
+                    ImGui::SeparatorText(T("Game files"));
+                    if (ImGui::Button(T("Select ISO"))) spawn(L"select-iso");
                     ImGui::BeginDisabled(installed || !fs::exists(root/"selected-iso.txt"));
-                    ImGui::SameLine(); if(ImGui::Button("Prepare game"))spawn(L"import");
+                    ImGui::SameLine(); if(ImGui::Button(T("Prepare game")))spawn(L"import");
                     ImGui::EndDisabled();
-                    ImGui::TextWrapped("Select ISO, wait for validation, then prepare your game. Original game files stay on this computer.");
+                    ImGui::TextWrapped(T("Select ISO, wait for validation, then prepare your game. Original game files stay on this computer."));
                     if (fs::exists(root/"CosmicFourArmsBridge.exe") &&
                         fs::exists(root/"four-arms-importer/prepare_four_arms_import.py")) {
-                        ImGui::SeparatorText("Optional PS3 content");
+                        ImGui::SeparatorText(T("Optional PS3 content"));
                         ImGui::BeginDisabled(!installed || fourArmsAvailable);
-                        if (ImGui::Button("Import Four Arms")) spawn(L"import-four-arms");
+                        if (ImGui::Button(T("Import Four Arms"))) spawn(L"import-four-arms");
                         ImGui::EndDisabled();
-                        ImGui::TextWrapped("%s", fourArmsAvailable ? "Four Arms is already installed." :
-                            "Select your extracted European PS3_GAME folder (BLES01110).");
+                        ImGui::TextWrapped("%s", fourArmsAvailable ? T("Four Arms is already installed.") :
+                            T("Select your extracted European PS3_GAME folder (BLES01110)."));
                     }
-                    ImGui::SeparatorText("Startup");
-                    if (ImGui::Checkbox("Skip intro logos", &skipIntro)) {
+                    if (fs::exists(root/"CosmicVilgaxBridge.exe") &&
+                        fs::exists(root/"four-arms-importer/import_alien_force.py")) {
+                        ImGui::SeparatorText(T("Optional Alien Force content"));
+                        ImGui::BeginDisabled(!installed || !fourArmsAvailable || alienForceAvailable);
+                        if (ImGui::Button(T("Import Alien Force aliens"))) spawn(L"import-alien-force");
+                        ImGui::EndDisabled();
+                        ImGui::TextWrapped("%s", alienForceAvailable ? T("Alien Force aliens are already installed.") :
+                            !fourArmsAvailable ? T("Import Four Arms first.") :
+                            T("Select your extracted Ben 10 Alien Force: Vilgax Attacks Xbox 360 game folder."));
+                    }
+                    ImGui::SeparatorText(T("Startup"));
+                    if (ImGui::Checkbox(T("Skip intro logos"), &skipIntro)) {
                         auto path = installation()/"user/skip-intro.txt";
                         std::error_code error;
                         fs::create_directories(path.parent_path(), error);
@@ -562,18 +670,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                     }
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Video")) {
+                if (ImGui::BeginTabItem((std::string(T("Video"))+"###video").c_str())) {
                     ImGui::Spacing();
-                    ImGui::TextUnformatted("Output resolution");
+                    ImGui::TextUnformatted(T("Output resolution"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##resolution",&resolution,"1280 x 720 (native)\0" "1920 x 1080\0" "2560 x 1440\0" "3840 x 2160\0");
-                    ImGui::TextUnformatted("Frame limit");
+                    ImGui::Combo("##resolution",&resolution,items({"1280 x 720 (native)","1920 x 1080","2560 x 1440","3840 x 2160"}).c_str());
+                    ImGui::TextUnformatted(T("Frame limit"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##frame-limit",&rate,"30 FPS\0" "60 FPS\0" "120 FPS\0" "Unlimited\0");
-                    ImGui::TextUnformatted("Window mode");
+                    ImGui::Combo("##frame-limit",&rate,items({"30 FPS","60 FPS","120 FPS","Unlimited"}).c_str());
+                    ImGui::TextUnformatted(T("Window mode"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##display-mode",&displayMode,"Windowed\0" "Borderless fullscreen\0" "Exclusive fullscreen\0");
-                    ImGui::TextUnformatted("Game Monitor");
+                    ImGui::Combo("##display-mode",&displayMode,items({"Windowed","Borderless fullscreen","Exclusive fullscreen"}).c_str());
+                    ImGui::TextUnformatted(T("Game Monitor"));
                     if(ImGui::BeginCombo("##game-monitor",monitors[monitor].label.c_str())) {
                         monitors=ben10::monitors::Enumerate();
                         monitor=std::min(monitor,int(monitors.size())-1);
@@ -581,9 +689,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                             if(ImGui::Selectable(monitors[i].label.c_str(),monitor==i))monitor=i;
                         ImGui::EndCombo();
                     }
-                    ImGui::Checkbox("Show FPS and frame time",&performanceOverlay);
+                    ImGui::Checkbox(T("Show FPS and frame time"),&performanceOverlay);
                     auto cinematicCheckbox = [&](const char* label, const char* setting, bool& value) {
-                        if (!ImGui::Checkbox(label, &value)) return;
+                        if (!ImGui::Checkbox(T(label), &value)) return;
                         auto path = installation()/"user"/setting;
                         std::error_code error;
                         fs::create_directories(path.parent_path(), error);
@@ -599,10 +707,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                         if (!saved) value = !value;
                         status = saved ? "Cinematic setting saved." : "Could not save cinematic setting.";
                     };
-                    ImGui::SeparatorText("Story cinematics");
+                    ImGui::SeparatorText(T("Story cinematics"));
                     ImGui::BeginDisabled(!installed || mp4PackAvailable || importingCinematics);
                     if (ImGui::Button(cinematicsAvailable && !mp4PackAvailable ?
-                                      "Upgrade Enhanced Cinematics ZIP" : "Import Enhanced Cinematics ZIP")) {
+                                      T("Upgrade Enhanced Cinematics ZIP") : T("Import Enhanced Cinematics ZIP"))) {
                         const auto properties = SDL_GetWindowProperties(window);
                         import_cinematics(static_cast<HWND>(SDL_GetPointerProperty(
                             properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)));
@@ -613,26 +721,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                                       "enhanced-cinematics.txt", enhancedCinematics);
                     cinematicCheckbox("Enhanced cinematic subtitles", "enhanced-subtitles.txt", enhancedSubtitles);
                     ImGui::EndDisabled();
-                    ImGui::TextWrapped("%s", cinematicsAvailable ? "Enhanced cinematics and subtitles are ready." :
-                        "Prepare the game, then import a ZIP containing the enhanced videos and subtitles.");
-                    ImGui::SeparatorText("Graphics quality");
-                    ImGui::TextUnformatted("Internal resolution");
+                    ImGui::TextWrapped("%s", cinematicsAvailable ? T("Enhanced cinematics and subtitles are ready.") :
+                        T("Prepare the game, then import a ZIP containing the enhanced videos and subtitles."));
+                    ImGui::SeparatorText(T("Graphics quality"));
+                    ImGui::TextUnformatted(T("Internal resolution"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##internal-resolution",&internalResolution,"Original\0" "Native (1x)\0" "2x\0");
-                    ImGui::TextUnformatted("Anti-aliasing");
+                    ImGui::Combo("##internal-resolution",&internalResolution,items({"Original","Native (1x)","2x"}).c_str());
+                    ImGui::TextUnformatted(T("Anti-aliasing"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##anti-aliasing",&antiAliasing,"Original\0" "Off\0" "FXAA\0" "FXAA Extreme\0");
-                    ImGui::TextUnformatted("Texture filtering");
+                    ImGui::Combo("##anti-aliasing",&antiAliasing,items({"Original","Off","FXAA","FXAA Extreme"}).c_str());
+                    ImGui::TextUnformatted(T("Texture filtering"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##texture-filtering",&textureFiltering,"Original\0" "2x\0" "4x\0" "8x\0" "16x\0");
-                    ImGui::TextUnformatted("Sharpening");
+                    ImGui::Combo("##texture-filtering",&textureFiltering,items({"Original","2x","4x","8x","16x"}).c_str());
+                    ImGui::TextUnformatted(T("Sharpening"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##sharpening",&sharpening,"Original\0" "Low\0" "Medium\0" "High\0");
-                    ImGui::TextUnformatted("Screen Bloom");
+                    ImGui::Combo("##sharpening",&sharpening,items({"Original","Low","Medium","High"}).c_str());
+                    ImGui::TextUnformatted(T("Screen Bloom"));
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##screen-bloom",&screenBloom,"Original\0" "Low\0" "Medium\0" "High\0");
-                    ImGui::TextWrapped("Graphics changes apply when the game starts.");
-                    if(ImGui::Button("Save video settings")) {
+                    ImGui::Combo("##screen-bloom",&screenBloom,items({"Original","Low","Medium","High"}).c_str());
+                    ImGui::TextWrapped(T("Graphics changes apply when the game starts."));
+                    if(ImGui::Button(T("Save video settings"))) {
                         const char* resolutions[]={"720p","1080p","1440p","4k"};
                         auto path=installation()/"user/pc-video.ini";
                         std::error_code error; fs::create_directories(path.parent_path(),error);
@@ -676,31 +784,31 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                     }
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Gameplay")) {
+                if (ImGui::BeginTabItem((std::string(T("Gameplay"))+"###gameplay").c_str())) {
                     ImGui::Spacing();
                     const auto path=installation()/"user/pc-gameplay.ini";
                     ImGui::BeginDisabled(!installed || worker.hProcess);
                     for(const auto& option:gameplayOptions) {
                         bool value=read_gameplay_option(path,option);
-                        if(ImGui::Checkbox(option.label,&value))
+                        if(ImGui::Checkbox(T(option.label),&value))
                             status=save_gameplay_option(path,option,value)?"Gameplay setting saved.":"Could not save gameplay setting.";
                     }
                     int fov=ben10::fov::Read(path);
                     const std::string fovText=ben10::fov::Label(fov);
-                    if(ImGui::SliderInt("Field of View",&fov,ben10::fov::kMin,ben10::fov::kMax,fovText.c_str()))
+                    if(ImGui::SliderInt(T("Field of View"),&fov,ben10::fov::kMin,ben10::fov::kMax,fovText.c_str()))
                         status=ben10::fov::Save(path,fov)?"Gameplay setting saved.":"Could not save gameplay setting.";
-                    if(ImGui::Button("Customize Keyboard and Mouse Controls"))
+                    if(ImGui::Button(T("Customize Keyboard and Mouse Controls")))
                         controlsEditor.Open(installation()/"user");
                     ImGui::EndDisabled();
-                    ImGui::TextWrapped("Changes save immediately and apply when the game starts.");
+                    ImGui::TextWrapped(T("Changes save immediately and apply when the game starts."));
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Sound")) {
+                if (ImGui::BeginTabItem((std::string(T("Sound"))+"###sound").c_str())) {
                     ImGui::Spacing();
                     const auto path=installation()/"user/pc-sound.ini";
                     auto music=ben10::music::ReadSettings(path);
                     ImGui::BeginDisabled(!installed || worker.hProcess);
-                    ImGui::SeparatorText("Volume");
+                    ImGui::SeparatorText(T("Volume"));
                     const auto settingsFile=game_settings_file();
                     const std::string settingsData=settingsFile.empty()?std::string():read(settingsFile);
                     bool anyVolume=false;
@@ -708,29 +816,40 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                         int volume=read_volume(settingsData,volumeKeys[i]);
                         if(volume<0)continue;
                         anyVolume=true;
-                        if(ImGui::SliderInt(volumeLabels[i],&volume,0,100,"%d%%"))
+                        if(ImGui::SliderInt(T(volumeLabels[i]),&volume,0,100,"%d%%"))
                             status=save_volume(settingsFile,volumeKeys[i],volume)?"Sound setting saved.":"Could not save sound setting.";
                     }
-                    if(!anyVolume)ImGui::TextWrapped("Start the game once to create your sound settings.");
-                    ImGui::SeparatorText("Music Integration");
-                    if(ImGui::Checkbox("Music Integration",&music.integration))
+                    if(!anyVolume)ImGui::TextWrapped(T("Start the game once to create your sound settings."));
+                    ImGui::SeparatorText(T("Music Integration"));
+                    if(ImGui::Checkbox(T("Music Integration"),&music.integration))
                         status=ben10::music::SaveSettings(path,music)?"Sound setting saved.":"Could not save sound setting.";
                     ImGui::EndDisabled();
-                    ImGui::TextWrapped("Detects Spotify and other media players and lowers the game audio while music plays. "
-                                      "Music overlay: M or View / Share during gameplay, where Music Priority is set.");
+                    ImGui::TextWrapped("%s", T("Detects Spotify and other media players and lowers the game audio while music plays. "
+                                      "Music overlay: M or View / Share during gameplay, where Music Priority is set."));
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Patches & saves")) {
+                if (ImGui::BeginTabItem((std::string(T("Saves & Languages"))+"###saves").c_str(), nullptr, savesFirst ? ImGuiTabItemFlags_SetSelected : 0)) {
                     ImGui::Spacing();
-                    ImGui::SeparatorText("Translation");
-                    ImGui::BeginDisabled(!installed);
-                    if(ImGui::Button("Add translation patch"))spawn(L"patch");
-                    ImGui::EndDisabled();
-                    ImGui::TextWrapped("Select the patch's global/scripts/xbx_us.txt file. Patches are supplied separately by their authors.");
-                    ImGui::SeparatorText("Save data");
-                    ImGui::TextWrapped("Save folder: %s",(installation()/"user").u8string().c_str());
-                    ImGui::TextWrapped("Keep this folder when updating. To reset saves, close the game and rename user to user-backup.");
-                    if(ImGui::Button("Open saves"))spawn(L"saves");
+                    ImGui::SeparatorText(T("Languages"));
+                    ImGui::TextUnformatted(T("Language"));
+                    ImGui::SetNextItemWidth(-1);
+                    int languageChoice = int(launcher_lang::Current());
+                    if (ImGui::BeginCombo("##language", launcher_lang::LanguageName(languageChoice))) {
+                        for (int l = 0; l < launcher_lang::Count; ++l)
+                            if (ImGui::Selectable(launcher_lang::LanguageName(l), languageChoice == l)) {
+                                launcher_lang::Current() = launcher_lang::Language(l);
+                                std::ofstream file(language_file(), std::ios::trunc);
+                                file << launcher_lang::kCodes[l];
+                                file.close();
+                                save_language_key(launcher_lang::kCodes[l]);
+                            }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::TextWrapped("%s", T("Changes the language of the launcher and its settings."));
+                    ImGui::SeparatorText(T("Save data"));
+                    ImGui::TextWrapped("%s %s",T("Save folder:"),(installation()/"user").u8string().c_str());
+                    ImGui::TextWrapped(T("Keep this folder when updating. To reset saves, close the game and rename user to user-backup."));
+                    if(ImGui::Button(T("Open saves")))spawn(L"saves");
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
@@ -744,9 +863,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
             if (status.rfind("Could not start",0)==0)
                 ImGui::TextColored(muted, "%s", status.c_str());
             else
-                ImGui::TextColored(muted, "FAN-MADE PC PORT");
+                ImGui::TextColored(muted, "%s", T("FAN-MADE PC PORT"));
         } else {
-            ImGui::TextColored(accent, "%s", worker.hProcess ? "WORKING" : installed ? "GAME READY" : "SETUP REQUIRED");
+            ImGui::TextColored(accent, "%s", worker.hProcess ? T("WORKING") : installed ? T("GAME READY") : T("SETUP REQUIRED"));
             ImGui::SetCursorPosX(margin);
             if (status.rfind("Preparing: ",0)==0) {
                 int percent=0;
@@ -754,7 +873,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                 ImGui::ProgressBar(std::clamp(percent,0,100)/100.f,ImVec2(size.x-margin*2,26),status.c_str());
             } else {
                 ImGui::PushTextWrapPos(size.x-margin);
-                ImGui::TextColored(muted, "%s", status.c_str());
+                ImGui::TextColored(muted, "%s", T(status.c_str()));
                 ImGui::PopTextWrapPos();
             }
         }

@@ -180,6 +180,38 @@ namespace CosmicRecompi {
                 return code.ToArray();
             }
         }
+#if COSMIC_NATIVE_SETTINGS
+        // The language the interface and the enhanced cinematics' subtitles use (also set in the launcher).
+        static readonly string[] Languages={"ENGLISH","ARABIC","DEUTSCH","FRANCAIS","ESPANOL","ITALIANO","PORTUGUES","TURKCE","RUSSIAN","JAPANESE"};
+        // Adds a "LANGUAGE - <current>" row that cycles to the next language when chosen. The row's text is
+        // picked by the stored index (as the graphics rows do), then the Video menu reopens.
+        static byte[] WithLanguageRow(byte[] menu) {
+            const int footer=7*4;
+            int start=(menu.Length-footer)/4;
+            var words=new List<uint>{
+                0x00000507,Crc("overlay"),0x00010517,Crc("cosmic_index_language"),0x01050120,1,
+                0x00000705,Crc("cosmic_language_value_0")};
+            for(int j=1;j<Languages.Length;j++) {
+                uint next=(uint)(start+words.Count+6);
+                words.AddRange(new uint[]{
+                    0x00000403,BitConverter.ToUInt32(BitConverter.GetBytes((float)j),0),
+                    0x02040110,(next<<16)|0x021f,
+                    0x00000705,Crc("cosmic_language_value_"+j)});
+            }
+            words.AddRange(new uint[]{
+                0x00000607,Crc("cosmic_video_menu"),0x00000801,
+                0x00000907,Crc("cosmic_change_language"),0x00000a01,
+                0x00000307,Crc("Menu_AddOption"),0x05060320,1});
+            using(var code=new MemoryStream()) {
+                code.Write(menu,0,menu.Length-footer);
+                foreach(uint word in words)Append(code,word);
+                code.Write(menu,menu.Length-footer,footer);
+                return code.ToArray();
+            }
+        }
+#else
+        static byte[] WithLanguageRow(byte[] menu) { return menu; }
+#endif
         static void NativeGraphicsChoices(Stream output,byte[] template,bool textRows,bool sharpening,bool screenBloom) {
             string[] keys=sharpening && textRows?(screenBloom?new[]{"scale","aa","filter","sharpen","bloom"}:new[]{"scale","aa","filter","sharpen"}):new[]{"scale","aa","filter"};
             int[] offsets={20,23,27,32,36,40};
@@ -275,12 +307,12 @@ namespace CosmicRecompi {
             using(MemoryStream output=new MemoryStream()) {
                 Append(output,0x1badbabe);Append(output,Read(legacy,4)+(uint)(VideoChoices.Length+2
 #if COSMIC_NATIVE_SETTINGS
-                    +2+(buttonIcons?1:-3)-(fps120?0:1)+(graphics?1:-4)-(graphics && customGraphics?(flatGraphics?(previousOverlay?16:13)-(sharpening && namedChoices && textRows && !previousOverlay?(screenBloom?2:1):0):1):12)
+                    +1+2+(buttonIcons?1:-3)-(fps120?0:1)+(graphics?1:-4)-(graphics && customGraphics?(flatGraphics?(previousOverlay?16:13)-(sharpening && namedChoices && textRows && !previousOverlay?(screenBloom?2:1):0):1):12)
 #endif
                     ));cursor=8;
                 for(int i=0;i<Read(legacy,4);i++) {
                     uint identity=Read(legacy,cursor);int bytes=checked((int)Read(legacy,cursor+8)*4);
-                    if(identity==Crc("CosmicVideoOptions"))Function(output,"CosmicVideoOptions",1,NativeMenu(template,"cosmic_video_menu","cosmic_video_label",new string[][] {
+                    if(identity==Crc("CosmicVideoOptions"))Function(output,"CosmicVideoOptions",1,WithLanguageRow(NativeMenu(template,"cosmic_video_menu","cosmic_video_label",new string[][] {
                         new string[]{"cosmic_resolution_label","OUTPUT RESOLUTION","CosmicResolutionOptions"},
                         new string[]{"cosmic_frame_limit_label","FRAME LIMIT","CosmicFrameOptions"}
 #if COSMIC_NATIVE_SETTINGS
@@ -289,10 +321,19 @@ namespace CosmicRecompi {
                         ,buttonIcons?new string[]{"cosmic_button_icons_label","BUTTON ICONS","CosmicButtonIconOptions"}:null
                         ,graphics?new string[]{"cosmic_graphics_label","GRAPHICS QUALITY","CosmicGraphicsOptions"}:null
 #endif
-                        }));
+                        })));
                     else output.Write(legacy,cursor,12+bytes);
                     cursor+=12+bytes;
                 }
+#if COSMIC_NATIVE_SETTINGS
+                using(var callback=new MemoryStream()) {
+                    foreach(uint word in new uint[]{
+                        0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),0x00000217,Crc("cosmic_cycle_language"),0x01050020,1,
+                        0x00000207,Crc("MenuStack_Pop"),0x00050220,1,
+                        0x00010502,0x00000207,Crc("CosmicVideoOptions"),0x01050220,1,0x21})Append(callback,word);
+                    Function(output,"cosmic_change_language",1,callback.ToArray());
+                }
+#endif
                 Function(output,"CosmicResolutionOptions",1,NativeMenu(template,"cosmic_resolution_menu","cosmic_resolution_label",new string[][] {VideoChoices[0],VideoChoices[1],VideoChoices[2],VideoChoices[3]}));
                 Function(output,"CosmicFrameOptions",1,NativeMenu(template,"cosmic_frame_menu","cosmic_frame_limit_label",new string[][] {VideoChoices[4],VideoChoices[5],
 #if COSMIC_NATIVE_SETTINGS
@@ -541,6 +582,7 @@ namespace CosmicRecompi {
 #endif
 #if COSMIC_NATIVE_SETTINGS
                 rows.Add(new string[]{"cosmic_overlay_label","SHOW FPS"});
+                for(int i=0;i<Languages.Length;i++)rows.Add(new string[]{"cosmic_language_value_"+i,"LANGUAGE  -  "+Languages[i]});
                 rows.Add(new string[]{"cosmic_display_label","DISPLAY MODE"});
                 rows.Add(new string[]{"cosmic_wipe_label","WIPE DATA"});
                 rows.Add(new string[]{"cosmic_wipe_question","RESET PROGRESS? BACKUP KEPT. RETURNING TO LAUNCHER."});
@@ -563,6 +605,67 @@ namespace CosmicRecompi {
             }
             if(cursor!=bytes.Length)throw new InvalidDataException("Invalid translation table boundary.");
             return keys;
+        }
+        // The game ships complete French, German, Spanish and Italian text tables beside the English one.
+        // Portuguese and Turkish have none, so the main menu and level select get translated lines only.
+        // The game's menu font has no Cyrillic, Arabic or Japanese glyphs; those languages keep English here.
+        static readonly Dictionary<string,Dictionary<string,string>> PartialLanguages=new Dictionary<string,Dictionary<string,string>> {
+            {"pt",new Dictionary<string,string>{
+                {"CONTINUE","CONTINUAR"},{"Continue","Continuar"},{"LEVEL SELECT","SELE\u00c7\u00c3O DE FASE"},
+                {"OPTIONS","OP\u00c7\u00d5ES"},{"Options","Op\u00e7\u00f5es"},{"CHEATS","TRAPA\u00c7AS"},{"BONUS MATERIAL","MATERIAL B\u00d4NUS"},
+                {"The Catacombs","As Catacumbas"},{"Eiffel Tower","Torre Eiffel"},{"Devil's Tower","Torre do Diabo"},
+                {"The Great Wall","A Grande Muralha"},{"Tokyo Nights","Noites de T\u00f3quio"},{"The Amazon","A Amaz\u00f4nia"},
+                {"The Colosseum","O Coliseu"},{"The Final Battle","A Batalha Final"},
+                {"Total DNA: %d","DNA total: %d"},{"Pickups %d/%d","Itens %d/%d"}}},
+            {"tr",new Dictionary<string,string>{
+                {"CONTINUE","DEVAM ET"},{"Continue","Devam Et"},{"LEVEL SELECT","BOLUM SECIMI"},
+                {"OPTIONS","SECENEKLER"},{"Options","Secenekler"},{"CHEATS","HILELER"},{"BONUS MATERIAL","BONUS ICERIK"},
+                {"The Catacombs","Yeralti Mezarlari"},{"Eiffel Tower","Eyfel Kulesi"},{"Devil's Tower","Seytan Kulesi"},
+                {"The Great Wall","Buyuk Sur"},{"Tokyo Nights","Tokyo Geceleri"},{"The Amazon","Amazon"},
+                {"The Colosseum","Kolezyum"},{"The Final Battle","Son Savas"},
+                {"Total DNA: %d","Toplam DNA: %d"},{"Pickups %d/%d","Toplananlar %d/%d"}}}
+        };
+        // The translated text table for a language code (null for English and for languages without one).
+        public static byte[] LanguageTranslation(string gameFolder,string code) {
+            if(string.IsNullOrEmpty(code) || code=="en")return null;
+            string scripts=Path.Combine(gameFolder,"global","scripts");
+            string english=Path.Combine(scripts,"xbx_us.txt"),englishBackup=english+".cosmic-original";
+            if(!File.Exists(englishBackup) && !File.Exists(english))return null;
+            byte[] originalEnglish=File.ReadAllBytes(File.Exists(englishBackup)?englishBackup:english);
+            HashSet<uint> keys=TextKeys(originalEnglish);
+            string official=code=="fr"?"xbx_fr.txt":code=="de"?"xbx_ge.txt":code=="es"?"xbx_sp.txt":code=="it"?"xbx_it.txt":null;
+            Encoding latin=Encoding.GetEncoding(1252);
+            try {
+                using(var result=new MemoryStream()) {
+                    Append(result,0x1badbabe);int kept=0;
+                    if(official!=null) {
+                        string path=Path.Combine(scripts,official);
+                        if(!File.Exists(path))return null;
+                        byte[] table=File.ReadAllBytes(path);
+                        int cursor=4;
+                        while(cursor<table.Length) {
+                            uint key=Read(table,cursor);int length=checked((int)Read(table,cursor+4));
+                            if(length<=0 || length>table.Length-cursor-8)return null;
+                            if(keys.Contains(key)){result.Write(table,cursor,8+length);kept++;}
+                            cursor+=8+length;
+                        }
+                    } else {
+                        Dictionary<string,string> map;
+                        if(!PartialLanguages.TryGetValue(code,out map))return null;
+                        int cursor=4;
+                        while(cursor<originalEnglish.Length) {
+                            uint key=Read(originalEnglish,cursor);int length=checked((int)Read(originalEnglish,cursor+4));
+                            string text=latin.GetString(originalEnglish,cursor+8,length-1),replaced;
+                            byte[] bytes=map.TryGetValue(text,out replaced)?latin.GetBytes(replaced+"\0"):null;
+                            if(bytes!=null){Append(result,key);Append(result,(uint)bytes.Length);result.Write(bytes,0,bytes.Length);}
+                            else result.Write(originalEnglish,cursor,8+length);
+                            kept++;cursor+=8+length;
+                        }
+                    }
+                    if(kept!=keys.Count)return null;
+                    return result.ToArray();
+                }
+            } catch(Exception) { return null; }
         }
         public static byte[] MergeTranslation(byte[] original,byte[] translation) {
             byte[] authored=English(original); // Also verifies the supported original hash.
