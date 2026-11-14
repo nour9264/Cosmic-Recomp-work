@@ -14,6 +14,9 @@ includes = ["config/adjustors.toml"]
 # and one 12-byte setter were missed by automatic function discovery.
 [entrypoint.functions]
 0x8222E8E0 = { size = 12 }
+# Reached by Big Chill's glide landing through a virtual call and crashed as unregistered:
+# mr r3,r4; li r4,0; tail branch to 0x82132D30.
+0x8211A5B8 = { size = 12 }
 0x82407E3C = { size = 8 }
 0x824238DC = { size = 8 }
 0x824239F4 = { size = 8 }
