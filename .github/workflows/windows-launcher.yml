@@ -59,7 +59,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed: $test" }
           }
           $csc = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-          & $csc /nologo /target:exe /platform:x64 /out:build/IsoReaderTests.exe launcher/IsoImage.cs tests/IsoReaderTests.cs
+          # csc.exe drops the folder from a source path written with forward slashes, so these two use backslashes.
+          & $csc /nologo /target:exe /platform:x64 /out:build/IsoReaderTests.exe launcher\IsoImage.cs tests\IsoReaderTests.cs
           if ($LASTEXITCODE -ne 0) { throw 'ISO fixture compilation failed.' }
           & ./build/IsoReaderTests.exe build/parser-fixtures
           if ($LASTEXITCODE -ne 0) { throw 'ISO fixture tests failed.' }
