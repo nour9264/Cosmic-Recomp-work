@@ -26,6 +26,7 @@ public:
     }
     // Keep repainting while the game is feeding lines, so they show on every frame.
     bool NeedsContinuousRepaint() override {
+        if(ben10_pc_menu::ben_upgrades::active.load(std::memory_order_relaxed))return false;
         std::lock_guard guard(ben10::text_overlay::Lock());
         const ULONGLONG now = GetTickCount64();
         for (const auto& entry : ben10::text_overlay::Entries())
@@ -185,7 +186,7 @@ protected:
     }
 
     void OnDraw(ImGuiIO& io) override {
-        if (!font_) return;
+        if (!font_ || ben10_pc_menu::ben_upgrades::active.load(std::memory_order_relaxed)) return;
         const ULONGLONG now = GetTickCount64();
         std::vector<ben10::text_overlay::Entry> visible;
         {

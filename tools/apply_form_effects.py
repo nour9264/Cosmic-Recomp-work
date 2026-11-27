@@ -148,3 +148,16 @@ if 'CosmicOrbHands' not in text:
     text = add_include(add_include(text, 'slot_freeze.h'), 'orb_hands.h')
     path.write_text(text)
 print('Form effect hooks applied.')
+
+# Ultimate Cannonbolt side intake uses the live ball bone pose, not the
+# character-facing effect root. Keep this independently idempotent.
+path, marker = unit('sub_8213A9A0')
+text = path.read_text()
+if 'ben10::ucb_suction::Refresh' not in text:
+    start = text.index(marker)
+    end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+    end = len(text) if end < 0 else end
+    body = text[start:end]
+    body = replace_once(body, 'loc_8213ADEC:\n',
+                        'loc_8213ADEC:\n\tben10::ucb_suction::Refresh(ctx, base, ctx.r31.u32, ctx.r26.u32);\n', 'UCB live ball attachment')
+    path.write_text(add_include(text[:start] + body + text[end:], 'ucb_suction.h'))

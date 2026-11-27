@@ -1,3 +1,15 @@
+# Cosmic Recomp Alpha 9
+
+- **Upgrade Forms:** Ultimatrix levels 1 to 6 (Rath, Four Arms, Alien Force aliens, Ultimate aliens, Master Control, cooldown reduction), Health and Energy upgrades, and a Cosmetics page (Play as Albedo, Transformation Animation, Realistic Ultimatrix, Potis Altiare). 450,000 points buy every upgrade; cosmetics are paid from the same balance. Open it with **Y / Triangle** on the Upgrade Forms screen.
+- **New forms:** Cannonbolt, Ultimate Cannonbolt and Ultimate Way Big (**L3** in the final battle, 1.5x damage, Ben and Albedo looks, cyan beam, voice).
+- **Photo Mode** (F9, D-pad Down or the pause-menu row) and **Show HUD**.
+- **Bundled content:** the extra aliens, pictures and voices ship with the launcher and install after the ISO import; Ultimate Way Big, Ben's new Ultimatrix and the new transformation and chest-tap motions are put into your own game files by patches that apply only to the unmodified originals.
+- **Interact animations** for the Alien Force aliens and the five Ultimates, made in Blender and put into the game files by the bundled patches (`docs/INTERACT_ANIMATIONS.md`).
+- **Locks and roster:** Rath, Four Arms, the Alien Force aliens and the Ultimates stay padlocked until bought; R3 swaps follow into the Master Control pages; cosmetics are bought with points and saved in the game save.
+- **Fixes:** script VM crash on a non-object reference (Ampfibian), crash after an R3 swap and transform, crash when an effect cannot be created (Ultimate Swampfire double jump), live refresh rate with the frame limit, launcher status file lock, trace overhead.
+
+**Known issues:** Not yet played from an installer build. A crash when transforming into Ultimate Humungousaur in one Rome level was seen once and is not understood (see `docs/INTERACT_ANIMATIONS.md`). Several Ultimate Cannonbolt effects and sounds come from a PS2 game; the owner decides on distribution before a public release.
+
 # Cosmic Recomp Alpha 8.5
 
 - **Alien Force aliens:** Chromastone, Jetray and Goop on All Aliens page 4. Import them from your own *Vilgax Attacks* Xbox 360 folder with **Setup → Import Alien Force aliens**.

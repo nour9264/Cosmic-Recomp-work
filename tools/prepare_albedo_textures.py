@@ -196,7 +196,7 @@ def recolor_texture(payload, width, height, kind, bc3, portrait=None):
     return base_size, data
 
 
-def prepare(originals, output, four_arms=None, imported=()):
+def prepare(originals, output, four_arms=None, imported=(), extra_entries=()):
     actors = (
         ('l_romd/l_romd_t.xbx', 0, 0x14934253, 'watch'),
         ('l_romd/l_romd_t.xbx', 0, 0x89f54dfd, 'ben'),
@@ -248,7 +248,7 @@ def prepare(originals, output, four_arms=None, imported=()):
     # The imported aliens' R3 ring holograms (added to gtex_s.xbx by the importer): the green
     # picture becomes red, as the other Albedo textures do.
     holograms = table((originals / 'global/gtex_s.xbx').read_bytes())
-    for name in ('chromastone', 'jetray', 'goop'):
+    for name in ('chromastone', 'jetray', 'goop', 'cannonbolt'):
         key = zlib.crc32(f'cosmic_{name}_holo'.encode('ascii'))
         if key in holograms:
             actors += (('global/gtex_s.xbx', 0, key, 'hologram'),)
@@ -256,7 +256,12 @@ def prepare(originals, output, four_arms=None, imported=()):
     pack += struct.pack('<I', len(actors))
     portrait_path = Path(__file__).with_name('way_big_portrait.rgb')
     portrait = portrait_path.read_bytes()
+    ready = {struct.unpack_from('<I', data)[0]: data for data in extra_entries}
     for archive, offset, key, kind in actors:
+        if key in ready:
+            # The owner's new Ultimatrix texture is larger than the stock one; its Albedo look ships ready-made.
+            pack += ready[key]
+            continue
         record = table((originals / archive).read_bytes()[offset:])[key]
         fmt, width, height = struct.unpack_from('>HHH', record, 4)
         compression = {0x90434000: 18, 0xa0848000: 20}.get(struct.unpack_from('>I', record)[0])
@@ -294,13 +299,14 @@ if __name__ == '__main__':
     parser.add_argument('originals', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--four-arms', type=Path)
+    parser.add_argument('--extra-entry', type=Path, action='append', default=[], help='A ready-made pack entry that replaces the computed one')
     parser.add_argument('--menu-cursor', type=Path)
     parser.add_argument('--options-badge', type=Path)
     parser.add_argument('--imported', nargs=2, action='append', default=[], metavar=('PACKAGE', 'TEXTURE'),
                         help='Imported alien package and its body texture key (hex)')
     args = parser.parse_args()
     prepare(args.originals, args.output, args.four_arms,
-            [(Path(package), int(key, 16)) for package, key in args.imported])
+            [(Path(package), int(key, 16)) for package, key in args.imported], [p.read_bytes() for p in args.extra_entry])
     if args.menu_cursor:
         args.menu_cursor.write_bytes(extract_menu_cursor(args.originals))
     if args.options_badge:

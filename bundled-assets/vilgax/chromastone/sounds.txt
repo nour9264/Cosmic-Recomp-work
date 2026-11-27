@@ -1,0 +1,13 @@
+<sound name="chrmstone_gatling_gun" id="0" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_laserbeam" id="2" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_prismatic_explo" id="15" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_energy_outburst" id="19" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_hurt" id="5" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_jump" id="6" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_land_big" id="8" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_land_small" id="9" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_light1" id="10" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_light2" id="11" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_light3" id="12" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_heavy1" id="12" swpgroupid="0" prjid="chrmstn"/>
+<sound name="chrmstone_heavy2" id="11" swpgroupid="0" prjid="chrmstn"/>

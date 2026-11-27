@@ -17,6 +17,7 @@ using Row = std::array<const char*, ben10::language::kCount>;
 inline const std::vector<Row>& Rows() {
     static const std::vector<Row> rows = {
 #include "menu_text_table.inc"
+#include "upgrade_text_table.inc"
     };
     return rows;
 }

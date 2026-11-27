@@ -4,6 +4,7 @@
 #include "pc_menu_bridge.h"
 #include "keyboard_mouse_runtime.h"
 #include "fov_runtime.h"
+#include "photo_mode.h"
 #include "music_session.h"
 #include <rex/input/mnk/mnk_input_driver.h>
 #include <atomic>
@@ -18,9 +19,23 @@ using Clock=std::chrono::steady_clock;
 Clock::time_point previous{};
 }
 extern "C" void Ben10FilterGameInput(uint32_t status,uint32_t guest_state,uint8_t* base) {
+  // Photo Mode owns the keyboard, mouse and controller: the game sees an untouched pad (the packet number stays).
+  if(status==0 && guest_state && ben10::photo::BlockGameInput()) {
+    for(unsigned i=4;i<16;++i)base[guest_state+i]=0;
+    return;
+  }
+  if(status==0 && guest_state && ben10_pc_menu::transformation_animation_pending.load(std::memory_order_relaxed) &&
+     !ben10_pc_menu::pause_menu_active.load() && !ben10_pc_video::CapturesGameInput()) {
+    // Brief authored Ben pose: keep pause/back, suppress movement, attacks
+    // and new transformations until the original switch commits.
+    const uint16_t buttons=uint16_t(base[guest_state+4]<<8|base[guest_state+5]);
+    const uint16_t kept=buttons&0x0030;
+    base[guest_state+4]=uint8_t(kept>>8);base[guest_state+5]=uint8_t(kept);
+    for(unsigned i=6;i<16;++i)base[guest_state+i]=0;
+  }
   // X_INPUT_STATE: packet[4], buttons[2], LT[1], RT[1]. Keep the SDK's
   // raw controller state intact: the page selector must still see RT edges.
-  if(status==0 && guest_state && ben10_pc_menu::all_aliens_enabled &&
+  if(status==0 && guest_state && ben10_pc_menu::MasterControlActive() &&
      base[guest_state+6]>30)base[guest_state+7]=0;
   // Quick Music Overlay: View / Share (0x20), big-endian buttons at +4. During
   // gameplay the button belongs to the overlay and is hidden from the game; the
@@ -44,7 +59,48 @@ extern "C" void Ben10FilterGameInput(uint32_t status,uint32_t guest_state,uint8_
     }
   }
 }
+bool Ben10SampleWayBigL3() {
+  using namespace ben10::ultimate_way_big;
+  auto* host=ben10_pc_menu::runtime.load();
+  auto* input=host?static_cast<rex::input::InputSystem*>(host->input_system()):nullptr;
+  rex::input::X_INPUT_STATE state{};
+  const bool connected=input && ben10::photo::ReadGameState(input,state)==0;
+  const bool paused=ben10_pc_menu::pause_menu_active.load() || ben10_pc_video::CapturesGameInput();
+  static bool logged=false;
+  if (!logged) {
+    logged=true;
+    REXLOG_INFO("Ultimate Way Big: player draw input sample, connected={}, paused={}",connected,paused);
+  }
+  const bool pressed=ObserveL3(connected && !paused,(state.gamepad.buttons & 0x0040)!=0);
+  // The existing draw callback queues the Final Battle VM update. Continue
+  // queuing only during the short authored gesture, not on ordinary frames.
+  if (!paused && !active.load(std::memory_order_relaxed) &&
+      ben10_pc_menu::transformation_animation_pending.load(std::memory_order_relaxed)) {
+    request_pressed.store(true,std::memory_order_relaxed);
+    return true;
+  }
+  if (pressed) {
+    request_pressed.store(true,std::memory_order_relaxed);
+    REXLOG_INFO("Ultimate Way Big: player draw observed L3");
+  }
+  return pressed;
+}
+void Ben10ObserveWayBigForm(bool ultimate) {
+  using namespace ben10::ultimate_way_big;
+  if (active.exchange(ultimate,std::memory_order_relaxed)==ultimate) return;
+  if (!ultimate) {
+    player_person.store(0,std::memory_order_relaxed);
+    REXLOG_INFO("Ultimate Way Big: stock form became drawable again");
+    return;
+  }
+  if (auto* host=ben10_pc_menu::runtime.load()) {
+    const auto voice=host->user_data_root()/"Ultimate_Way_Big_Clean.wav";
+    const bool played=PlaySoundW(voice.c_str(),nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT)!=FALSE;
+    REXLOG_INFO("Ultimate Way Big: separate form drawable, voice={}",played);
+  }
+}
 extern "C" int Ben10MouseCameraStick(double* x,double* y) {
+  if(ben10::photo::BlockGameInput())return 0;
   // The camera turns at stick x its own top speed for the frame. Supplying
   // pixels / frame time makes the turn proportional to the distance moved,
   // as with a PC mouse, independent of frame rate. The poll applies it

@@ -20,6 +20,7 @@ namespace CosmicRecompi {
 #endif
             switch(profile) {
                 case "standard": case "measure-standard": case "measure-phases": break;
+                case "standard-no-reuse":
                 case "measure-no-reuse":
                     // getenv checks presence, so "0" would still enable reuse.
                     // Disable its optional shadow observer too: it runs the same
@@ -64,6 +65,31 @@ namespace CosmicRecompi {
                 string logs=Path.Combine(Installation(root),"logs");Directory.CreateDirectory(logs);
                 return Path.Combine(logs,"launcher.log");
             }catch{return Path.Combine(root,"launcher.log");}
+        }
+        internal static void PublishLauncherStatus(string root, string value) {
+            string path = Path.Combine(root, "launcher-status.txt");
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".new";
+            try {
+                File.WriteAllText(temporary, value, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Replace(temporary, path, null);
+                else File.Move(temporary, path);
+            } catch (IOException error) {
+                LogStatusFailure(root, error);
+            } catch (UnauthorizedAccessException error) {
+                LogStatusFailure(root, error);
+            } finally {
+                try { File.Delete(temporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        static void LogStatusFailure(string root, Exception error) {
+            // Windows may hold this UI-only file open without allowing deletion.
+            try {
+                File.AppendAllText(LauncherLog(root), DateTime.UtcNow.ToString("o") +
+                    " Could not update launcher status: " + error.Message + Environment.NewLine);
+            } catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
         public static string Installation(string root) {
             string preference = Path.Combine(root, "installation-path.txt");
@@ -156,11 +182,15 @@ namespace CosmicRecompi {
                         File.Exists(badge) && new FileInfo(badge).Length == 2 * 128 * 128 * 4) return;
                 }
             }
+            string extra = "";
+            string entries = Path.Combine(folder, "albedo-entries");
+            if (Directory.Exists(entries))
+                foreach (string entry in Directory.GetFiles(entries, "*.entry")) extra += " --extra-entry \"" + entry + "\"";
             string temporary = target + ".new";
             var start = new ProcessStartInfo(Path.Combine(tools, "python.exe")) {
                 Arguments = "-B \"" + script + "\" \"" + Path.Combine(folder, "game") + "\" \"" +
                     temporary + "\" --menu-cursor \"" + cursor + ".new\" --options-badge \"" + badge + ".new\"" +
-                    (hasFourArms ? " --four-arms \"" + fourArms + "\"" : "") + imported,
+                    (hasFourArms ? " --four-arms \"" + fourArms + "\"" : "") + imported + extra,
                 WorkingDirectory = tools,
                 UseShellExecute = false,
                 CreateNoWindow = true,

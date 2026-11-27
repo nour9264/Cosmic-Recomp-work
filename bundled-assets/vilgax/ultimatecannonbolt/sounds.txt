@@ -1,0 +1,5 @@
+<sound name="ucb_poe_backspin" id="0" swpgroupid="0" prjid="ucbpova"/>
+<sound name="ucb_poe_meteor" id="15" swpgroupid="0" prjid="ucbpova"/>
+<sound name="ucb_poe_suction" id="2" swpgroupid="0" prjid="ucbpova"/>
+<sound name="ucb_poe_spin" id="19" swpgroupid="0" prjid="ucbpova"/>
+<sound name="ucb_poe_bounce" id="16" swpgroupid="0" prjid="ucbpova"/>

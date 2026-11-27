@@ -8,7 +8,9 @@ This is an existing native PC port, not a greenfield recompilation. Read
 - Use the pinned SDK and `sdk-patches/rex-sdk-local.diff`. Never run `rexglue init`
   over this checkout or replace it with newly generated boilerplate.
 - Codegen is only for locally owned game input; follow it with
-  `tools/apply_game_integration.py`. Do not commit generated game C++ or assets.
+  `tools/apply_game_integration.py`. Do not commit generated game C++ or any asset taken from the player's ISO. The one
+  exception is `bundled-assets/` (extra aliens, pictures, voices, patches; `docs/BUNDLED_ASSETS.md`): the repository owner
+  decided it ships with the launcher. Change it only with `tools/stage_bundled_assets.py` and the owner's authorization.
 - Build the bridge with `--hero-time` for explicit provenance. The unqualified
   command also selects that current profile; `--rath-disabled` is legacy only.
 - Prefer `tools/build_development.ps1` after prerequisites and patched SDK install.

@@ -1,9 +1,12 @@
 #pragma once
+#include "photo_mode.h"
 // Original-menu integration, enabled by the launcher's handoff event or an
 // explicit private diagnostic. No host popup replaces the game's menu.
 // Registration uses the existing game script registry and SDK thunk allocator.
 #include "language_setting.h"
 #include "text_overlay.h"
+#include "ben_upgrade_arc.h"
+#include "ben_upgrade_frame.h"
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/thread_state.h>
@@ -11,11 +14,13 @@
 #include <rex/ui/window.h>
 #include <rex/ppc.h>
 #include <atomic>
+#include <bit>
 #include <thread>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
 #include <Windows.h>
+#include <mmsystem.h>
 #include "pc_video_menu.h"
 #include "all_aliens_paging.h"
 #include "performance_visibility.h"
@@ -24,9 +29,16 @@
 #include "albedo_hud.h"
 #include "albedo_textures.h"
 #include <vector>
+#include <set>
+#include <tuple>
 #include <mutex>
 #include <rex/input/input_system.h>
 #include "pc_monitors.h"
+#include "cosmetics_state.h"
+#include "upgrade_economy.h"
+
+extern "C" void sub_821FED60(PPCContext&, uint8_t*);
+extern "C" void sub_821C8100(PPCContext&, uint8_t*);
 
 namespace ben10_pc_menu {
 inline std::atomic<rex::Runtime*> runtime{nullptr};
@@ -34,7 +46,14 @@ inline std::atomic<rex::ui::Window*> window{nullptr};
 inline std::atomic<bool> registered{false};
 inline ben10::AlienPages alien_pages;
 inline bool all_aliens_enabled=false;
+// all_aliens_enabled is the backwards-compatible preference, not ownership.
+inline std::atomic<bool> master_control_unlocked{false};
+inline bool MasterControlActive() {
+  return master_control_unlocked.load(std::memory_order_relaxed);
+}
 inline bool hero_time_enabled=false;
+inline std::atomic<bool> transformation_animation_enabled{false};
+inline std::atomic<bool> transformation_animation_pending{false};
 inline bool hero_button_armed=false;
 inline bool hero_input_observed=false;
 inline std::mutex video_settings_mutex;
@@ -54,17 +73,17 @@ inline void ReturnNumber(PPCContext& ctx,uint8_t* base,float value) {
   std::memcpy(base+slot,&encoded_type,4);std::memcpy(base+slot+4,&bits,4);
 }
 inline void AllAliensPage(PPCContext& ctx,uint8_t* base) {
-  if(!all_aliens_enabled){alien_pages.Poll(false,false,0,0);ReturnNumber(ctx,base,-1);return;}
+  if(!MasterControlActive()){alien_pages.Poll(false,false,0,0);ReturnNumber(ctx,base,-1);return;}
   auto* host=runtime.load();
   rex::input::X_INPUT_STATE state{};
   auto* input=host?static_cast<rex::input::InputSystem*>(host->input_system()):nullptr;
-  const bool connected=input && input->GetState(0,&state)==0;
-  ReturnNumber(ctx,base,float(alien_pages.Poll(all_aliens_enabled,connected,
+  const bool connected=input && ben10::photo::ReadGameState(input,state)==0;
+  ReturnNumber(ctx,base,float(alien_pages.Poll(MasterControlActive(),connected,
       state.gamepad.left_trigger,state.gamepad.right_trigger)));
 }
 inline void AllAliensEnabled(PPCContext& ctx,uint8_t* base) {
   if(std::getenv("BEN10_MENU_AUDIT"))REXLOG_INFO("Cosmic menu audit: Gameplay rows created");
-  ReturnNumber(ctx,base,all_aliens_enabled?1.0f:0.0f);
+  ReturnNumber(ctx,base,MasterControlActive()?1.0f:0.0f);
 }
 inline void AllAliensTrace(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
@@ -72,14 +91,7 @@ inline void AllAliensTrace(PPCContext& ctx,uint8_t* base) {
 }
 inline void ToggleAllAliens(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
-  auto* host=runtime.load();if(!host)return;
-  const bool next=!all_aliens_enabled;
-  try {
-    std::lock_guard guard(video_settings_mutex);
-    SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","all_aliens",next?"on":"off");
-    all_aliens_enabled=next;
-    REXLOG_INFO("Cosmic Gameplay: All Aliens {}",next?"ON":"OFF");
-  }catch(const std::exception& e){REXLOG_ERROR("Cosmic Gameplay settings: {}",e.what());}
+  // Legacy callback retained for old scripts; ownership is save-only.
 }
 inline bool HeroTimeDiagnostic() {
   const char* value=std::getenv("BEN10_HERO_TIME_DIAGNOSTIC");
@@ -89,14 +101,7 @@ inline void HeroTimeEnabled(PPCContext& ctx,uint8_t* base) {
   ReturnNumber(ctx,base,hero_time_enabled?1.0f:0.0f);
 }
 inline void ToggleHeroTime(PPCContext& ctx,uint8_t* base) {
-  ReturnVoid(ctx,base);auto* host=runtime.load();if(!host)return;
-  try {
-    std::lock_guard guard(video_settings_mutex);
-    const bool next=!hero_time_enabled;
-    SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","hero_time",next?"on":"off");
-    hero_time_enabled=next;hero_button_armed=false;
-    REXLOG_INFO("Cosmic private Hero Time: {}",next?"ON":"OFF");
-  }catch(const std::exception& error){REXLOG_ERROR("Cosmic Hero Time settings: {}",error.what());}
+  ReturnVoid(ctx,base);
 }
 inline void AlbedoHudEnabled(PPCContext& ctx,uint8_t* base) {
   ReturnNumber(ctx,base,ben10::albedo_hud::enabled.load(std::memory_order_relaxed)?1.0f:0.0f);
@@ -119,7 +124,7 @@ inline void ToggleAlbedoHud(PPCContext& ctx,uint8_t* base) {
 inline void HeroTimeButton(PPCContext& ctx,uint8_t* base) {
   auto* host=runtime.load();rex::input::X_INPUT_STATE state{};
   auto* input=host?static_cast<rex::input::InputSystem*>(host->input_system()):nullptr;
-  const bool connected=input && input->GetState(0,&state)==0;
+  const bool connected=input && ben10::photo::ReadGameState(input,state)==0;
   if(!hero_input_observed) {
     hero_input_observed=true;
     REXLOG_INFO("Cosmic private Hero Time: input callback observed; enabled={}, connected={}",hero_time_enabled,connected);
@@ -144,6 +149,166 @@ template<int Event> void HeroTimeTrace(PPCContext& ctx,uint8_t* base) {
   const char* events[]={"resources ready","Ultimate confirmed","return requested","Ben confirmed; recharge started","recharge complete"};
   REXLOG_INFO("Cosmic private Hero Time: {}",events[Event]);
 }
+inline void UltimateCannonboltVoice(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  const DWORD count=GetEnvironmentVariableW(L"BEN10_ULTIMATE_CANNONBOLT_VOICE",nullptr,0);
+  if(!count)return;
+  std::wstring path(count,L'\0');
+  const DWORD length=GetEnvironmentVariableW(L"BEN10_ULTIMATE_CANNONBOLT_VOICE",path.data(),count);
+  if(!length || length>=count)return;
+  const bool played=PlaySoundW(path.c_str(),nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT)!=FALSE;
+  REXLOG_INFO("Ultimate Cannonbolt: host voice playback {}",played?"started":"failed");
+}
+inline bool ultimate_way_big_pending = false;
+inline bool ultimate_way_big_request_observed = false;
+inline uint64_t ultimate_way_big_load_deadline = 0;
+
+inline uint32_t ReadWayBigWord(const uint8_t* base,uint32_t address) {
+  uint32_t encoded = 0;
+  std::memcpy(&encoded,base+address,sizeof(encoded));
+  return _byteswap_ulong(encoded);
+}
+
+inline void CaptureWayBigPerson(uint8_t* base) {
+  const uint32_t arguments = ReadWayBigWord(base,0x826F8688);
+  if (arguments && arguments <= UINT32_MAX-16) {
+    ben10::ultimate_way_big::player_person.store(ReadWayBigWord(base,arguments+12),std::memory_order_relaxed);
+  }
+}
+
+inline bool WayBigFormDrawable(const PPCContext& ctx,uint8_t* base,bool albedo) {
+  using namespace ben10::ultimate_way_big;
+  const auto id=albedo?kAlbedoMesh:kBenMesh;
+  PPCContext skin=ctx;
+  skin.r3.u64=id;
+  sub_821C8100(skin,base);
+  const auto weights=skin.r3.u32;
+  if (!weights || ReadWayBigWord(base,weights+72)!=kVertices ||
+      ReadWayBigWord(base,weights+76)!=kVertices) {
+    REXLOG_WARN("Ultimate Way Big: keeping stock fighter, skin {:08X} unavailable or invalid (handle {:08X})",id,weights);
+    return false;
+  }
+
+  PPCContext model=ctx;
+  model.r3.u64=id;
+  model.r4.u64=0;
+  model.r5.u64=0;
+  sub_821FED60(model,base);
+  const auto resource=model.r3.u32;
+  if (!resource || !ReadWayBigWord(base,resource+20)) {
+    REXLOG_WARN("Ultimate Way Big: keeping stock fighter, model {:08X} unavailable (handle {:08X})",id,resource);
+    return false;
+  }
+  REXLOG_INFO("Ultimate Way Big: verified live model and skin {:08X}",id);
+  return true;
+}
+
+inline void TraceWayBigForm(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  const auto arguments=ReadWayBigWord(base,0x826F8688);
+  if (!arguments || arguments>UINT32_MAX-16 ||
+      ReadWayBigWord(base,arguments+8)!=0x00020000) return;
+  const auto event = std::bit_cast<float>(ReadWayBigWord(base,arguments+12));
+  static constexpr const char* events[] = {
+      "preload called", "current mission unavailable", "package load requested",
+      "package load callback reached", "L3 waiting for package", "form switch already in progress",
+      "requesting Ultimate form", "requesting normal form", "switch callback reached",
+      "form data missing", "current form is outside the Way Big pair",
+  };
+  for (unsigned index=0; index<std::size(events); ++index) {
+    if (event!=float(index)) continue;
+    REXLOG_INFO("Ultimate Way Big: {}", events[index]);
+    return;
+  }
+}
+
+inline void UltimateWayBigRequest(PPCContext& ctx,uint8_t* base) {
+  using namespace ben10::ultimate_way_big;
+  ReturnNumber(ctx,base,0);
+  const auto frame = Ben10SubmittedFrames() + 1;
+  const auto seen = player_frame.load(std::memory_order_relaxed);
+  if (ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed) &&
+      !ultimate_way_big_request_observed) {
+    ultimate_way_big_request_observed = true;
+    REXLOG_INFO("Ultimate Way Big: final battle request callback reached");
+  }
+  if (!ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed) ||
+      pause_menu_active.load(std::memory_order_relaxed) || !seen || frame - seen > 4) {
+    request_pressed.store(false,std::memory_order_relaxed);
+    return;
+  }
+  auto* host = runtime.load();
+  if (!host) return;
+  const bool pressed = request_pressed.exchange(false,std::memory_order_relaxed);
+  if (pressed && !transformation_animation_pending.load(std::memory_order_relaxed)) REXLOG_INFO("Ultimate Way Big: request callback observed L3");
+  if (separate_form) {
+    if (!pressed) return;
+    if (!active.load(std::memory_order_relaxed) && !transformation_animation_pending.load(std::memory_order_relaxed)) {
+      const bool albedo=ben10::albedo_hud::enabled.load(std::memory_order_relaxed);
+      // Keep the alternate drawable for live palette switching.
+      if (!WayBigFormDrawable(ctx,base,albedo) || !WayBigFormDrawable(ctx,base,!albedo)) return;
+      form_albedo.store(albedo,std::memory_order_relaxed);
+    }
+    if (!transformation_animation_pending.load(std::memory_order_relaxed)) CaptureWayBigPerson(base);
+    ReturnNumber(ctx,base,1);
+    return;
+  }
+  const bool albedo = ben10::albedo_hud::enabled.load(std::memory_order_relaxed);
+  if (pressed && active.exchange(false,std::memory_order_relaxed)) {
+    player_person.store(0,std::memory_order_relaxed);
+    REXLOG_INFO("Ultimate Way Big: returned to normal Way Big");
+    ReturnNumber(ctx,base,1);
+    return;
+  }
+  if (pressed && !ultimate_way_big_pending) {
+    const auto ready = ready_frame[albedo].load(std::memory_order_relaxed);
+    if (!ready) {
+      // The stock loader resolves registered resident resources by mesh checksum.
+      const uint32_t mesh = albedo ? kAlbedoMesh : kBenMesh;
+      PPCContext load = ctx;
+      load.r3.u64 = mesh;
+      load.r4.u64 = 0;
+      load.r5.u64 = 0;
+      sub_821FED60(load,base);
+      REXLOG_INFO("Ultimate Way Big: model load {:08X} returned {:08X}",mesh,load.r3.u32);
+      if (!load.r3.u32) return;
+    }
+    ultimate_way_big_pending = true;
+    checking_model.store(true,std::memory_order_relaxed);
+    ultimate_way_big_load_deadline = frame + 180;
+  }
+  if (!ultimate_way_big_pending) return;
+  const auto ready = ready_frame[albedo].load(std::memory_order_relaxed);
+  if (!ready || frame - ready > 4) {
+    if (frame >= ultimate_way_big_load_deadline) {
+      ultimate_way_big_pending = false;
+      checking_model.store(false,std::memory_order_relaxed);
+      REXLOG_WARN("Ultimate Way Big: model load did not become drawable");
+    }
+    return;
+  }
+  ultimate_way_big_pending = false;
+  checking_model.store(false,std::memory_order_relaxed);
+  CaptureWayBigPerson(base);
+  active.store(true,std::memory_order_relaxed);
+  const auto voice = host->user_data_root() / "Ultimate_Way_Big_Clean.wav";
+  PlaySoundW(voice.c_str(),nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT);
+  REXLOG_INFO("Ultimate Way Big: final battle transformation");
+  ReturnNumber(ctx,base,1);
+}
+inline void UltimateWayBigReset(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  ben10::ultimate_way_big::active.store(false,std::memory_order_relaxed);
+  ben10::ultimate_way_big::checking_model.store(false,std::memory_order_relaxed);
+  ben10::ultimate_way_big::request_pressed.store(false,std::memory_order_relaxed);
+  ben10::ultimate_way_big::l3_armed.store(false,std::memory_order_relaxed);
+  for (auto& ready : ben10::ultimate_way_big::ready_frame)
+    ready.store(0,std::memory_order_relaxed);
+  ben10::ultimate_way_big::player_frame.store(0,std::memory_order_relaxed);
+  ben10::ultimate_way_big::player_person.store(0,std::memory_order_relaxed);
+  ultimate_way_big_pending = false;
+  ultimate_way_big_request_observed = false;
+}
 template<bool Active> void UltimateHudPalette(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   ben10::ultimate_hud::active.store(Active,std::memory_order_relaxed);
@@ -167,6 +332,8 @@ template<int Level> void PresenceLevel(PPCContext& ctx,uint8_t* base) {
   pause_menu_active.store(false);
   const char* levels[]={"menus","l_chin","l_mili","l_pari","l_romd","l_romn","l_rush","l_tokd","l_tokn"};
   ben10::albedo_textures::final_battle_active.store(Level == 7);
+  ben10::ultimate_way_big::preload_requested.store(false,std::memory_order_relaxed);
+  UltimateWayBigReset(ctx,base);
   if constexpr (Level == 7) {
     if (ben10::albedo_textures::final_battle_trace_enabled.load())
       ++ben10::albedo_textures::final_battle_trace_epoch;
@@ -193,6 +360,12 @@ inline void QuitToLauncher(PPCContext& ctx, uint8_t* base) {
     }
     current->RequestClose();
   });
+}
+// The pause menu's PHOTO MODE row: its script resumes the game, then calls this to start Photo Mode once play is live.
+inline void PhotoModeFromPause(PPCContext& ctx, uint8_t* base) {
+  REXLOG_INFO("Cosmic PC menu: PHOTO MODE selected");
+  ReturnVoid(ctx,base);
+  ben10::photo::RequestFromPauseMenu();
 }
 inline void WipeProgress(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
@@ -231,7 +404,12 @@ template<int Resolution,int Rate> void SetVideo(PPCContext& ctx,uint8_t* base) {
     std::filesystem::create_directories(path.parent_path());auto temporary=path;temporary+=L".native.tmp";
     {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<"resolution="<<resolution<<"\nframe_limit="<<rate<<"\n";for(const auto& extra:other)file<<extra<<'\n';file.flush();if(!file)throw std::runtime_error("Could not write video settings");}
     if(!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("Could not commit video settings");
-    if constexpr(Rate>=0)if(!ben10_pacing_probe::pacer.SetRate(Rate))throw std::runtime_error("Could not apply frame limit");
+    if constexpr(Rate>=0) {
+      // The launcher starts the guest at 120 Hz only for the 120 FPS limit; follow the same
+      // rule live (the SDK's vblank timer re-reads this value a few times per second).
+      rex::cvar::SetFlagByName("video_mode_refresh_rate",Rate==120?"120":"60");
+      if(!ben10_pacing_probe::pacer.SetRate(Rate))throw std::runtime_error("Could not apply frame limit");
+    }
     REXLOG_INFO("Cosmic native VIDEO: resolution={}, frame_limit={}, saved=true",resolution,rate);
   }catch(const std::exception& error){REXLOG_ERROR("Cosmic native VIDEO failed: {}",error.what());}
 }
@@ -406,9 +584,12 @@ inline std::atomic<unsigned> snapshot{0};
 inline std::atomic<unsigned> pending{0};
 inline unsigned tick_request=0; // Read and written only by the game script thread.
 inline bool tick_stock_changed=false;
-constexpr unsigned apply_flag=1u<<7;
+// Bit 7 belongs to Transformation Animation itself; the apply command
+// must not force that preference ON when the user explicitly selects OFF.
+constexpr unsigned apply_flag=1u<<10;
 constexpr unsigned back=1u<<8;
 constexpr unsigned wipe=1u<<9;
+static_assert((apply_flag & 0xffu)==0 && (apply_flag & (back|wipe))==0);
 
 template<unsigned Row,bool On> void Capture(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
@@ -438,8 +619,9 @@ inline void SaveStockPreferences(PPCContext& ctx,uint8_t* base) {
 inline void Open(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   pending=0;
-  snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
-      (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u);
+  snapshot=(snapshot.load()&7u)|
+      (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u)|
+      (transformation_animation_enabled.load()?128u:0u);
   ben10_pc_video::controller_sample=0;
   ben10_pc_video::opening_guard=true;
   active=true;
@@ -460,8 +642,6 @@ inline void Finish(PPCContext& ctx,uint8_t* base) {
   const auto request=tick_request;
   if(request&apply_flag) {
     if(tick_stock_changed)SaveStockPreferences(ctx,base);
-    if(bool(request&8u)!=all_aliens_enabled)ToggleAllAliens(ctx,base);
-    if(bool(request&16u)!=hero_time_enabled)ToggleHeroTime(ctx,base);
     if(bool(request&32u)!=ben10::albedo_hud::enabled.load())ToggleAlbedoHud(ctx,base);
     if(bool(request&64u)!=background_controller_input.load()) {
       auto* host=runtime.load();
@@ -474,8 +654,16 @@ inline void Finish(PPCContext& ctx,uint8_t* base) {
         }
       }catch(const std::exception& error){REXLOG_ERROR("Could not save background controller input: {}",error.what());}
     }
-    snapshot=(snapshot.load()&7u)|(all_aliens_enabled?8u:0u)|(hero_time_enabled?16u:0u)|
-        (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u);
+    if(bool(request&128u)!=transformation_animation_enabled.load()) {
+      if(auto* host=runtime.load())try {
+        std::lock_guard guard(video_settings_mutex);
+        SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","transformation_animation",request&128u?"on":"off");
+        transformation_animation_enabled=bool(request&128u);
+      }catch(const std::exception& error){REXLOG_ERROR("Could not save Transformation Animation: {}",error.what());}
+    }
+    snapshot=(snapshot.load()&7u)|
+        (ben10::albedo_hud::enabled.load()?32u:0u)|(background_controller_input.load()?64u:0u)|
+        (transformation_animation_enabled.load()?128u:0u);
     pending=0;
   }
   if(request&(back|wipe)) {
@@ -614,7 +802,7 @@ inline int Row(uint8_t* base) {
   const float aspect=float(client.right)/float(client.bottom);
   const float x=.5f+(float(cursor.x)/float(client.right)-.5f)*aspect*.75f;
   const float y=1.0f-float(cursor.y)/float(client.bottom);
-  const float pitch=std::fabs(anchor-.546875f)<1e-4f?.066f:.075f;
+  const float pitch=std::fabs(anchor-.546875f)<1e-4f?.060f:.075f;   // compact pause menu (seven rows with Photo Mode)
   const int row=int(std::lround((anchor-y)/pitch))+1;
   if(pressed)REXLOG_INFO("Cosmic menu mouse: client {}x{} cursor {},{} overlay {:.3f},{:.3f} anchor {:.3f} row {}/{}",
       client.right,client.bottom,cursor.x,cursor.y,x,y,anchor,row,int(count));
@@ -643,6 +831,8 @@ inline bool wheel_button=false;
 inline bool wheel_click=false;
 inline uint64_t button_seen=0;
 // Radius 0: Level Select passes only its centre (radius .225).
+// True while an alien wheel screen (R3 roster, Upgrade Forms, Level Select) is on screen: it polls every frame.
+inline bool WheelOpen() { return GetTickCount64()-wheel_last_poll<400; }
 inline float WheelAngle(uint8_t* base,bool has_radius) {
   const auto now=GetTickCount64();
   const bool resumed=now-wheel_last_poll>1000;
@@ -727,6 +917,180 @@ inline void Poll(PPCContext& ctx,uint8_t* base) {
   ReturnNumber(ctx,base,float(action));
 }
 }
+namespace ben_upgrades {
+inline void SyncMasterControl(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  float tier,purchased;
+  if(!menu_mouse::Argument(base,1,tier) || !menu_mouse::Argument(base,2,purchased) ||
+      tier<0 || tier>ben10::upgrade_economy::matrix_max || tier!=std::floor(tier))return;
+  const bool unlocked=tier>=ben10::upgrade_economy::master_control_tier;
+  const bool hero_unlocked=tier>=4;
+  if(hero_time_enabled!=hero_unlocked)hero_button_armed=false;
+  hero_time_enabled=hero_unlocked;
+  master_control_unlocked.store(unlocked,std::memory_order_relaxed);
+}
+// Which roster slots the wheels and Upgrade Forms ask about (slot as asked, form ID checked, purchased tier required).
+inline void RosterTrace(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  float asked,form,tier,allowed;
+  if(!menu_mouse::Argument(base,1,asked) || !menu_mouse::Argument(base,2,form) || !menu_mouse::Argument(base,3,tier) ||
+     !menu_mouse::Argument(base,4,allowed))return;
+  static int logged=0;
+  if(logged++>400)return;
+  REXLOG_INFO("Roster check: slot/form {} -> form ID {}, purchased level {}, allowed {}",int(asked),int(form),int(tier),int(allowed));
+}
+inline void TransformAnimationEnabled(PPCContext& ctx,uint8_t* base) {
+  ReturnNumber(ctx,base,transformation_animation_enabled.load()?1.f:0.f);
+}
+inline void TransformAnimationPending(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  float value;
+  if(menu_mouse::Argument(base,1,value) && (value==0 || value==1)) {
+    const bool was=transformation_animation_pending.exchange(value==1,std::memory_order_relaxed);
+    if(value==1 && !was) {
+      if(auto* host=runtime.load()) {
+        const auto path=host->user_data_root()/"ben-transform-select.wav";
+        PlaySoundW(path.c_str(),nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT);
+      }
+    }
+  }
+}
+inline std::atomic<uint64_t> last_tick{0};
+inline std::atomic<unsigned> points{0}, health{0}, energy{0}, matrix{0}, purchase{0};
+inline std::atomic<bool> open_request{false}, active{false};
+// Set by the Cosmetics page; applied on the guest thread in Tick (same path as the old Gameplay switch).
+inline std::atomic<bool> cosmetic_albedo_toggle{false};
+inline bool y_held = false;
+inline bool InUpgradeForms() {
+  const auto time = last_tick.load();
+  return time && GetTickCount64()-time < 300;
+}
+inline void Close() {
+  purchase=0;
+  active=false;
+  y_held=true;
+  ben10::text_overlay::upgrade_page_owns_text=false;
+  {std::lock_guard guard(ben10::text_overlay::Lock());ben10::text_overlay::Entries().clear();}
+  ben10_pc_video::release_guard=true;
+  ben10_pc_video::visible=false;
+}
+// Same checked receiver conversion as the original CircularElement methods.
+inline void ResizeHudArc(PPCContext& ctx,uint8_t* base) {
+ ReturnNumber(ctx,base,0);
+ float tier,energy;
+ if(!menu_mouse::Argument(base,1,tier) || !menu_mouse::Argument(base,2,energy) ||
+    tier<0 || tier>3 || tier!=std::floor(tier) || (energy!=0 && energy!=1))return;
+ auto* host=runtime.load();if(!host)return;
+ auto* resolve=host->function_dispatcher()->GetFunction(0x82237B00);if(!resolve)return;
+ PPCContext local=ctx;local.r3.u64=0x1e90b321;resolve(local,base);
+ const uint32_t object=local.r3.u32;
+ if(!object || object>UINT32_MAX-116)return;
+ if(ben10::text_overlay::Word(base,object)!=0x8201A02C)return;
+ const auto vertices=ben10::text_overlay::Word(base,object+108);
+ if(!vertices || vertices>UINT32_MAX-528)return;
+ std::array<float,132> strip{};
+ for(unsigned i=0;i<strip.size();++i)strip[i]=ben10::text_overlay::Real(base,vertices+i*4);
+ if(!ben10::upgrade_arc::Rebuild(strip,ben10::text_overlay::Real(base,object+8),
+       ben10::text_overlay::Real(base,object+12),unsigned(tier),energy==1))return;
+ if(energy==1){ben10::upgrade_frame::energy=unsigned(tier);ben10::upgrade_arc::energy_object=object;}
+ else {ben10::upgrade_frame::health=unsigned(tier);ben10::upgrade_arc::health_object=object;}
+ // Guest-thread only, once on creation or a successful purchase; no polling.
+ for(unsigned i=0;i<strip.size();++i){uint32_t bits;std::memcpy(&bits,&strip[i],4);
+  bits=_byteswap_ulong(bits);std::memcpy(base+vertices+i*4,&bits,4);}
+ ReturnNumber(ctx,base,ben10::upgrade_frame::ready?1.f:0.f);
+}
+inline void ShowHudFrame(PPCContext& ctx,uint8_t* base) {
+ ReturnVoid(ctx,base);
+ ben10::upgrade_frame::enabled=ben10::upgrade_frame::ready.load();
+}
+// The cosmetics the save owns (bit per item, in the order of ben10::cosmetics::Item). Anything not owned is switched off;
+// one that has just been bought starts OFF.
+inline bool albedo_preference=false, transform_preference=false;
+inline void ApplyCosmetics(unsigned mask) {
+  namespace cosmetics=ben10::cosmetics;
+  auto* host=runtime.load();
+  bool save=false;
+  static bool first_sync=true;
+  if(first_sync && mask) {
+    // First report of this session: what the save owns gets back what the player had switched on.
+    first_sync=false;
+    for(unsigned i=0;i<cosmetics::Count;++i)cosmetics::owned[i]=(mask>>i)&1u;
+    if(cosmetics::owned[cosmetics::Albedo])ben10::albedo_hud::enabled=albedo_preference;
+    if(cosmetics::owned[cosmetics::Transform])transformation_animation_enabled=transform_preference;
+    return;
+  }
+  for(unsigned i=0;i<cosmetics::Count;++i) {
+    const bool own=(mask>>i)&1u;
+    const bool was=cosmetics::owned[i].exchange(own);
+    if(own==was)continue;
+    if(own) {
+      if(i==cosmetics::Realistic){cosmetics::realistic_on=false;save=true;}
+      else if(i==cosmetics::Bolts){cosmetics::bolts_on=false;save=true;}
+      else if(i==cosmetics::Transform){
+        transformation_animation_enabled=false;
+        if(host){std::lock_guard guard(video_settings_mutex);SaveVideoKey(host->user_data_root()/"pc-gameplay.ini","transformation_animation","off");}
+      } else if(i==cosmetics::Albedo)ben10::albedo_hud::enabled=false;
+    }
+  }
+  if(!cosmetics::owned[cosmetics::Albedo].load())ben10::albedo_hud::enabled=false;
+  if(!cosmetics::owned[cosmetics::Transform].load())transformation_animation_enabled=false;
+  if(save && host)ben10::cosmetics::Save(host->user_data_root());
+}
+inline void CosmeticsSync(PPCContext& ctx,uint8_t* base) {
+  ReturnVoid(ctx,base);
+  float mask;
+  if(menu_mouse::Argument(base,1,mask) && mask>=0 && mask<16)ApplyCosmetics(unsigned(mask));
+}
+inline void Tick(PPCContext& ctx, uint8_t* base) {
+  ReturnNumber(ctx,base,0);
+  float balance,h,e,m,cosmetic_mask=-1;
+  if(!menu_mouse::Argument(base,1,balance) || !menu_mouse::Argument(base,2,h) ||
+     !menu_mouse::Argument(base,3,e) || !menu_mouse::Argument(base,4,m))return;
+  if(menu_mouse::Argument(base,5,cosmetic_mask) && cosmetic_mask>=0 && cosmetic_mask<16)ApplyCosmetics(unsigned(cosmetic_mask));
+  if(!(balance>=0 && balance<=16777216 && h>=0 && h<=3 && e>=0 && e<=3 &&
+      m>=0 && m<=ben10::upgrade_economy::matrix_max))return;
+  const bool continuing=InUpgradeForms();
+  last_tick=GetTickCount64();
+  static unsigned last_logged[4]={~0u,~0u,~0u,~0u};
+  const unsigned now[4]={unsigned(balance),unsigned(h),unsigned(e),unsigned(m)};
+  if(std::memcmp(last_logged,now,sizeof now)) {
+    std::memcpy(last_logged,now,sizeof now);
+    REXLOG_INFO("Upgrade state: points={}, health tier={}, energy tier={}, Ultimatrix level={}",now[0],now[1],now[2],now[3]);
+  }
+  points=unsigned(balance);
+  health=unsigned(h);
+  energy=unsigned(e);
+  matrix=unsigned(m);
+  master_control_unlocked.store(m>=ben10::upgrade_economy::master_control_tier,std::memory_order_relaxed);
+  if(hero_time_enabled!=(m>=4))hero_button_armed=false;
+  hero_time_enabled=m>=4;
+  if(active.load()) {
+    if(cosmetic_albedo_toggle.exchange(false))ToggleAlbedoHud(ctx,base);
+    const auto action=purchase.exchange(0);
+    if(action==64) {
+      Close();
+      ReturnNumber(ctx,base,1); // Consume Back here; do not pop the stock menu.
+      return;
+    }
+    ReturnNumber(ctx,base,action?float(action):1.0f);
+    return;
+  }
+  auto* host=runtime.load();
+  auto* input=host?static_cast<rex::input::InputSystem*>(host->input_system()):nullptr;
+  rex::input::X_INPUT_STATE state{};
+  const bool down=input && ben10::photo::ReadGameState(input,state)==0 && (state.gamepad.buttons&0x8000);
+  const bool open=open_request.exchange(false) || (continuing && down && !y_held);
+  y_held=down;
+  if(!open || ben10_pc_video::CapturesGameInput())return;
+  active=true;
+  ben10::text_overlay::upgrade_page_owns_text=true;
+  {std::lock_guard guard(ben10::text_overlay::Lock());ben10::text_overlay::Entries().clear();}
+  ben10_pc_video::controller_sample=0;
+  ben10_pc_video::opening_guard=true;
+  ben10_pc_video::visible=true;
+  ReturnNumber(ctx,base,1);
+}
+}
 inline void OpenVideoPreview(PPCContext& ctx,uint8_t* base) {
   ReturnVoid(ctx,base);
   ben10_pc_video::controller_sample=0;
@@ -798,10 +1162,19 @@ inline void OnFrame() {
     REXLOG_INFO("Cosmic PC menu: registered {} callback {:08X}, registry {:08X}",name,callback,registry);
   };
   add("cosmic_quit_to_launcher",QuitToLauncher);
+  add("cosmic_photo_mode",PhotoModeFromPause);
   add("cosmic_preview_video",OpenVideoPreview);
   add("cosmic_options_open",options_hub::Open<false>);
   add("cosmic_options_open_credits",options_hub::Open<true>);
   add("cosmic_options_poll",options_hub::Poll);
+  add("cosmic_ben_upgrade_menu_tick",ben_upgrades::Tick);
+  add("cosmic_cosmetics_sync",ben_upgrades::CosmeticsSync,2);
+  add("cosmic_master_control_sync",ben_upgrades::SyncMasterControl,3);
+  add("cosmic_ben_transform_enabled",ben_upgrades::TransformAnimationEnabled);
+  add("cosmic_ben_transform_pending",ben_upgrades::TransformAnimationPending,2);
+  add("cosmic_ben_transform_delta",HeroTimeDelta);
+  add("cosmic_ben_resize_hud_arc",ben_upgrades::ResizeHudArc,3);
+  add("cosmic_ben_hud_frame_ready",ben_upgrades::ShowHudFrame);
   add("cosmic_sound_open",sound_preview::Open);
   add("cosmic_sound_begin_tick",sound_preview::BeginTick);
   add("cosmic_sound_finish",sound_preview::Finish);
@@ -882,15 +1255,22 @@ inline void OnFrame() {
   {std::ifstream settings(host->user_data_root()/"pc-gameplay.ini");std::string line;
     while(std::getline(settings,line)) {
       if(!line.empty() && line.back()=='\r')line.pop_back();
-      if(line=="all_aliens=on")all_aliens_enabled=true;
-      if(line=="all_aliens=off")all_aliens_enabled=false;
-      if(HeroTimeDiagnostic() && line=="hero_time=on")hero_time_enabled=true;
-      if(line=="hero_time=off")hero_time_enabled=false;
+      if(line=="transformation_animation=on")transformation_animation_enabled=true;
+      if(line=="transformation_animation=off")transformation_animation_enabled=false;
       if(line=="albedo_hud_preview=on")ben10::albedo_hud::enabled=true;
       if(line=="albedo_hud_preview=off")ben10::albedo_hud::enabled=false;
       if(line=="background_controller_input=on")background_controller_input=true;
       if(line=="background_controller_input=off")background_controller_input=false;
+      if(line=="show_hud=off")ben10::photo::show_hud=false;
+      if(line=="show_hud=on")ben10::photo::show_hud=true;
     }}
+  // Cosmetics are bought in the Upgrades menu: Albedo and the transformation animation stay off until owned.
+  ben10::cosmetics::Load(host->user_data_root());
+  // What the player had switched on is kept; ownership comes from the save and is applied by the first script sync.
+  ben10_pc_menu::ben_upgrades::albedo_preference=ben10::albedo_hud::enabled.load();
+  ben10_pc_menu::ben_upgrades::transform_preference=transformation_animation_enabled.load();
+  ben10::albedo_hud::enabled=false;
+  transformation_animation_enabled=false;
   std::error_code trace_marker_error;
   if (std::filesystem::is_regular_file(host->user_data_root()/"way-big-texture-trace.txt", trace_marker_error)) {
     ben10::albedo_textures::final_battle_trace_enabled.store(true);
@@ -925,6 +1305,7 @@ inline void OnFrame() {
   add("cosmic_toggle_all_aliens",ToggleAllAliens);
   add("cosmic_all_aliens_enabled",AllAliensEnabled);
   add("cosmic_all_aliens_trace",AllAliensTrace);
+  add("cosmic_roster_trace",ben_upgrades::RosterTrace,5);
   if(HeroTimeDiagnostic()) {
     add("cosmic_hero_enabled",HeroTimeEnabled);
     add("cosmic_toggle_hero_time",ToggleHeroTime);
@@ -932,6 +1313,11 @@ inline void OnFrame() {
     add("cosmic_hero_delta",HeroTimeDelta);
     add("cosmic_hero_loaded",HeroTimeTrace<0>);
     add("cosmic_hero_active",HeroTimeTrace<1>);
+    add("cosmic_ultimate_cannonbolt_voice",UltimateCannonboltVoice);
+ add("cosmic_ultimate_way_big_request",UltimateWayBigRequest,2);
+ if (ben10::ultimate_way_big::separate_form)
+   add("cosmic_ultimate_way_big_form_trace",TraceWayBigForm,2);
+ add("cosmic_ultimate_way_big_reset",UltimateWayBigReset);
     add("cosmic_hero_return",HeroTimeTrace<2>);
     add("cosmic_hero_recharge",HeroTimeTrace<3>);
     add("cosmic_hero_ready",HeroTimeTrace<4>);

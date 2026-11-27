@@ -1,0 +1,611 @@
+{
+ "version": 1,
+ "files": [
+  {
+   "path": "four-arms/atk_fa.ddf",
+   "size": 6500,
+   "sha256": "1932dad3303106e48a18e8ef684b6ce2c32625a6dd2d9153b4da1266685f02a9",
+   "origin": "PS3 edition (Four Arms), prepared by prepare_four_arms_import.py"
+  },
+  {
+   "path": "four-arms/four-arms-registration.bin",
+   "size": 38772,
+   "sha256": "88e6e20b111839bcae6e143db9262bc908051ee4fc575008b177fbe98c5d4dd5",
+   "origin": "PS3 edition (Four Arms), prepared by prepare_four_arms_import.py"
+  },
+  {
+   "path": "four-arms/four-arms-upgrade-init.bin",
+   "size": 696,
+   "sha256": "a0b8ec855b985e97aacde2d7890b1e68f5a0fb0a73d3454afc365cc81e54b9d8",
+   "origin": "PS3 edition (Four Arms), prepared by prepare_four_arms_import.py"
+  },
+  {
+   "path": "four-arms/g_fa.xbx",
+   "size": 2434304,
+   "sha256": "5521e240f6f6ab9cfa20912f0304f8f24300dccb84899edad65036ce77062955",
+   "origin": "PS3 edition (Four Arms), prepared by prepare_four_arms_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/albedo.txt",
+   "size": 18,
+   "sha256": "088091c3d4e0d00858cd73ca3a6586b69de60d86503f33828e516ae2fe6f0dc3",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/atk_cs.ddf",
+   "size": 6500,
+   "sha256": "2e1f3d0b74937fec5d1bf4cdd5babb6b65835527af6cf396dc34256484b751f8",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/callout.fsb",
+   "size": 14496,
+   "sha256": "c281c8c604ebcaed39be9bde08f35aaee774d736c83a2efbcced5b2693c85273",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/callout.txt",
+   "size": 28,
+   "sha256": "44254abb480734e18d31325465d5290d28742216afa2fb54734de98c42a9309d",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/character-records.bin",
+   "size": 484,
+   "sha256": "b451db865cd88c95f085b55f3e0c5a6856574d15fac16ad072652522394907c0",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/form-ids.txt",
+   "size": 15,
+   "sha256": "f4229300cb3b8b62d7df8f8fc61ae2a0dd8f8769d2d313d1397dc14a128b683c",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/forms.bin",
+   "size": 3096,
+   "sha256": "cbc9c7244bbd76ad451c7f1cb90d7f9c343b0090b2053e5061fba8256d0d1246",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/g_cs.xbx",
+   "size": 2964224,
+   "sha256": "0b7b41246077ec4fcc7f4b8ad8f86f95c5f48dd401dd15758209ff19f837b380",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/player-records.bin",
+   "size": 1988,
+   "sha256": "5c31946238d1cdd436b95eb21dbf67c4526484239b6329b512b0df8121e3d536",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/sounds.txt",
+   "size": 958,
+   "sha256": "b33a4c0d1271fc48cdb7c2abcba0abf8e4c35344a34886503a2a4353781bf573",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/chromastone/xbx-records.bin",
+   "size": 1708,
+   "sha256": "e619f49fb5420d272054e7bcf60958b4f0580c943c1dd6468a51f82f7791cb10",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/albedo.txt",
+   "size": 18,
+   "sha256": "c3048cb635bdfc51fd61599a94d05af5a1b4b02eb63ab48d583749e6ab8920d8",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/atk_jr.ddf",
+   "size": 6500,
+   "sha256": "71ec3c3fad0c21ba85abf37e2b31f5962aac54cd44685fdf32f4bc23f91c73d6",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/callout.fsb",
+   "size": 12448,
+   "sha256": "c396530afe76c50875a69e238b1bbe030af2b918280368c74091175bac70e49d",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/callout.txt",
+   "size": 23,
+   "sha256": "8d27e0742b287e54e9dffdc81310b2e16a4c527371190f82b3e8deb22bb0cd87",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/character-records.bin",
+   "size": 484,
+   "sha256": "65a5837892f07db55efe9664355d99775ac02ec6678d44507cfe1bdd3fe39393",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/form-ids.txt",
+   "size": 10,
+   "sha256": "7047a58264ddcf0ec673a9a3f109f59b439e970e56f752f3dfaf7a9f6b58cf81",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/forms.bin",
+   "size": 3096,
+   "sha256": "f2014c366c3c89667e84122e0dd73ad838110bb81a9d3385181f7961897acbfd",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/g_jr.xbx",
+   "size": 2088704,
+   "sha256": "50c0833bd435aaf6c2f89c261fb7c92c5b9a153dc542e63b2894fc03f14f84a8",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/player-records.bin",
+   "size": 1988,
+   "sha256": "573c6209c9f4064954698fc5872a6418fbb115752c5005afb380a029a0f4ba20",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/sounds.txt",
+   "size": 970,
+   "sha256": "1000330d7851fd2e08e10c51c40cbe23ab3bbf4951a9e3da60296ce9ab89dd3c",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/jetray/xbx-records.bin",
+   "size": 1708,
+   "sha256": "af9d27c03472bce0d1ca53e34d82e68b5bbef5f8b29557f47c3105bcc6299149",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/albedo.txt",
+   "size": 18,
+   "sha256": "1f3134f6acd72c90b8f7ae1784906596e02102de31ccf5907ae3b9db42800735",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/atk_gp.ddf",
+   "size": 6500,
+   "sha256": "1532bf0071e939cb430b082df5e907db6dca6e9cce8d06bf5c3f92e8e0ae7faa",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/callout.fsb",
+   "size": 14496,
+   "sha256": "c0e37a68baba534451a48e53db58f0e7387ae7d2e4c13323772212a383ee1e2e",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/callout.txt",
+   "size": 21,
+   "sha256": "bc9f80271f4988eb3462aa160bbe020fff14a6825b63a38bea7e2b490dd71f19",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/character-records.bin",
+   "size": 484,
+   "sha256": "ad4cfee61476896ec8fd357bf23e29da84365247afdb51fcfc17b7f8dd8db8e6",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/form-ids.txt",
+   "size": 8,
+   "sha256": "4b2ecd449fdc88132c751a833b26a9a5ee7befe3263c8c22917b224646b99444",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/forms.bin",
+   "size": 3096,
+   "sha256": "2b31814afc098b61c1bbacdf4aa1daa60d18d8cc96a4a58b6f1b11cfaed77350",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/g_gp.xbx",
+   "size": 2041088,
+   "sha256": "8df818ae9f60f442646e00030e7e6696ddf935739e117671ec983a2ad099c732",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/player-records.bin",
+   "size": 1988,
+   "sha256": "e57feead97b44cc451cf0c4241da06dc5a73fd6f1bb9a55fab4c3ebf243788c5",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/sounds.txt",
+   "size": 1022,
+   "sha256": "8e99d3564e25643654bdb75957295f7e3f1b76381afdcb241f84995d6b9f6878",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/goop/xbx-records.bin",
+   "size": 1708,
+   "sha256": "cabcfd5062a18d7a2154d65b9e73fc3e150e6a404813d64c2e9d771bc1082949",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), prepared by prepare_vilgax_import.py"
+  },
+  {
+   "path": "vilgax/cannonbolt/albedo.txt",
+   "size": 18,
+   "sha256": "768943eff91f89ba368b62a90955f276d2d8456e1ccabe99025f151d22ed00de",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/atk_cb.ddf",
+   "size": 6500,
+   "sha256": "5c1f8d48aeb7f938e9f64beb5629b580aca0ee1d5f8d071b964c3e7f29b8c28e",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/callout.fsb",
+   "size": 8352,
+   "sha256": "fe2c5f55d7aeeacc2552e848f92a71945fd57dac9d5bbdcb4049481e371c1962",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/callout.txt",
+   "size": 27,
+   "sha256": "1fa1bd10c3b5da7c09de5d0c99e525746249ae01e1beef5e70858b19754dccaf",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/character-records.bin",
+   "size": 484,
+   "sha256": "2442d2ddb18fac9478846c477c0d689cfce4b8b300335da3272b41bbe296e78a",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/form-ids.txt",
+   "size": 14,
+   "sha256": "48aae4940f42aff25cacb6e9b868ddc1cf9eaa963bf5a670e61ff628a9b48d8a",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/forms.bin",
+   "size": 3096,
+   "sha256": "fc553d3b20837516a316b5dc96c03e69aee17324fa3b83cde8ff22dfc0304310",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/g_cb.xbx",
+   "size": 4397824,
+   "sha256": "7fed4a5f2c624cd3d50eddbc059fb94549e91f0686c29e65b77f55c8a5ac412e",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/player-records.bin",
+   "size": 1988,
+   "sha256": "62ad55c6adc423105c5e7d602fdffd37a9c80ed92796fef7366ed190d8c1db54",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/sounds.txt",
+   "size": 890,
+   "sha256": "1edbcf62bf36b859e1c7ba4e160ee6ce042e5eb3c50c05601e70681b78db7182",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/cannonbolt/xbx-records.bin",
+   "size": 1708,
+   "sha256": "e80641594491824a9dbfb8554187e21cc0149138135ae9a878cf139c0b16f871",
+   "origin": "Ben 10: Alien Force - Vilgax Attacks (Xbox 360), finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/albedo.txt",
+   "size": 19,
+   "sha256": "43996de754c14b8445f2669c887767134ec54e369c33bdcb95c95d902195e765",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/atk_ucb.ddf",
+   "size": 6500,
+   "sha256": "2b7ea4aa9c1b1fbacb40c23afbcfecd37b8f42a4f8c66c7660c7ef97b64ed23c",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/callout.fsb",
+   "size": 243840,
+   "sha256": "36c981ee6dbfa1a9d22c9cf89e210dae1892b98680e3002f2df61c0287e54d94",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/callout.txt",
+   "size": 28,
+   "sha256": "eb2dae275973950d7954248932d6bcea4ff507a1cee53ebaf44459cc5dae47ff",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/character-records.bin",
+   "size": 484,
+   "sha256": "16a8687825e4e3fa304acec924b90aaf40720b1e7af014a4c2a3f8aa8fd1fb1c",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/form-ids.txt",
+   "size": 22,
+   "sha256": "d37a1ddcf3461411b3799b6e4cecd5d13b587d7b671539974ed65e50a6bb6afc",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/forms.bin",
+   "size": 2764,
+   "sha256": "e9a61e7abea075ffe03707f6b45e4ca9ed9b6daa73674fc7bb2cb267ac2fdca0",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/g_ucb.xbx",
+   "size": 3564800,
+   "sha256": "fa43b560dcece388abefb8f13ac5a0cbdda23c1d3007b2ce4240007b5fbba582",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/player-records.bin",
+   "size": 9940,
+   "sha256": "0c3b480bce1d26897cf8436ab07464a5900aca0131d27adb6e3f8cd660c10dd6",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/sounds.txt",
+   "size": 352,
+   "sha256": "6b35bf3ace473be057f138ff857d96171e4492a01542ac05e1397003f742bc0d",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/transform.wav",
+   "size": 241964,
+   "sha256": "73c944fbc2af75c11c4e664e28e6e7641f297449348d242359aa31a83d36adb6",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "vilgax/ultimatecannonbolt/xbx-records.bin",
+   "size": 1708,
+   "sha256": "0795ce9823f48d15b088c159ee0bfba7270f6cd62a90fef9d2fdb853cab5ce49",
+   "origin": "owner's Blender model; Protector of the Earth (PS2) effects and audio; finished by tools/cannonbolt"
+  },
+  {
+   "path": "user/upgrade-portraits.rgba",
+   "size": 1048576,
+   "sha256": "f30cff14d14b8dc6e48dbfdd4b729e21492bad75cca137abed616ea7ad2a8750",
+   "origin": "upgrade menu pictures (rendered from game and owner models)"
+  },
+  {
+   "path": "user/master-control-portrait.rgba",
+   "size": 262144,
+   "sha256": "aeced7ce7a3347d3ed7a32bb1a11e39120244d73721fe835426bf29962fe8f6e",
+   "origin": "upgrade menu picture"
+  },
+  {
+   "path": "user/cosmetic-previews.rgba",
+   "size": 786432,
+   "sha256": "9d6a080387224260db207c2fe31a35a949f8d61a7331a9014082f0a867f7bcef",
+   "origin": "cosmetic pictures made from the owner's reference images"
+  },
+  {
+   "path": "user/hud-upgrade-frames.rgba",
+   "size": 4194304,
+   "sha256": "ad33882fbd13cc305731a8ac96423a4da3668a7b993b9d9f34b335b0f40fb644",
+   "origin": "upgrade HUD frame art"
+  },
+  {
+   "path": "user/options-ultimatrix-hd.rgba",
+   "size": 2097152,
+   "sha256": "403e957098a883067255f4546380111820aae7cf9116b0c13c174705fc0bb02b",
+   "origin": "the game's Ultimatrix picture, upscaled by the owner"
+  },
+  {
+   "path": "user/ben-transform-select.wav",
+   "size": 35406,
+   "sha256": "0b6e23389ba0e5825ee5e8fe8d1b3d1dae612240ce75cf473cbc71e8c647e4d6",
+   "origin": "Ben's transformation select sound from Vilgax Attacks (Xbox 360)"
+  },
+  {
+   "path": "user/Ultimate_Way_Big_Clean.wav",
+   "size": 316844,
+   "sha256": "820a1f78ccaa8283d4f6d262775747b42ed850ba3be23927ae4d0de167ad6b3f",
+   "origin": "Ultimate Way Big transformation voice (supplied by the owner)"
+  },
+  {
+   "path": "ultimate-way-big-export/albedo.png",
+   "size": 27021,
+   "sha256": "9014b252b3ad1bccf6b7a0c0852352e211d89f64055c56cf50791a5062aae6f8",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "ultimate-way-big-export/ben.png",
+   "size": 27027,
+   "sha256": "5f9b50dcc801ec71dd6b34fe8765af3fa0e04c4b78d2828c4839260a4037c9c7",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "ultimate-way-big-export/eye-index-count.txt",
+   "size": 5,
+   "sha256": "89ea9766820e5b7891075a55d4c23762dd6f1f0b1ea6c7fac7395937faa6a5bc",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "ultimate-way-big-export/eye-swatch.txt",
+   "size": 3,
+   "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "ultimate-way-big-export/gill-mask.png",
+   "size": 20024,
+   "sha256": "c4805a884e832a815ebb0ce36985d476eef358a4cf30e80fcd124d9b3e8bcae1",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "ultimate-way-big-export/mesh-export.bin",
+   "size": 1684010,
+   "sha256": "9732b03c3e93e8f400c394b330f5fbffe296e51ceb458e2d30a6af1d3af3a9b2",
+   "origin": "owner's Blender export of Ultimate Way Big (mesh, textures)"
+  },
+  {
+   "path": "pictures/wheel-icons/05e1c713.bin",
+   "size": 16512,
+   "sha256": "1caaf4dce9a91a79b368b5809fa5514c006cf5f6fe3a30dab389d7eecf26ad83",
+   "origin": "selection-wheel picture of chromastone (owner-made art)"
+  },
+  {
+   "path": "pictures/wheel-icons/b458a502.bin",
+   "size": 16512,
+   "sha256": "2a351d79a0c18a84e2f0d2fcb7bb414f475075f7548df765091548e072973315",
+   "origin": "selection-wheel picture of jetray (owner-made art)"
+  },
+  {
+   "path": "pictures/wheel-icons/7206e5bc.bin",
+   "size": 16512,
+   "sha256": "89723873fe3660d4405186371a1ccd8274e2e0f3997f16a44000a6ecbea3f643",
+   "origin": "selection-wheel picture of goop (owner-made art)"
+  },
+  {
+   "path": "pictures/global-records/0b645fdf.bin",
+   "size": 16512,
+   "sha256": "0e79aaf1138752d069cce207b3ae35e16299305ca8a3aa1a87bad83565ad6944",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/global-records/32295b91.bin",
+   "size": 16512,
+   "sha256": "2a4d9de90c92de23da732ee0ae6f092ca1137925e053931f5246fbf1e8b68979",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/global-records/5e246511.bin",
+   "size": 16512,
+   "sha256": "9916d86df6c6393802e433aa05443ff7f3be2574b288d66f933d2a0ca6b6db82",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/global-records/89556671.bin",
+   "size": 8320,
+   "sha256": "97482425e6efcf419e8dba890d1a5e766e46fe10e7b5f26f72c655ff8c537cdf",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/global-records/c72d34ab.bin",
+   "size": 16512,
+   "sha256": "573718dd98a674b883b9a79bfb9730290bacf0078b23387a89d400350933363e",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/global-records/d4ec60ee.bin",
+   "size": 16512,
+   "sha256": "8f94b5af90112b64305919c8be77bc71d85a72313c9fba1836a93cc9b72c3ebb",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "pictures/gtex-records/76757ac1.bin",
+   "size": 65664,
+   "sha256": "09041ba48f34854ea62367e0074f09abe64b59fff92a0858d23145356e329102",
+   "origin": "Ultimate Cannonbolt effect sprite or picture (rubble, dust, wind funnel), prepared by tools/cannonbolt"
+  },
+  {
+   "path": "ben-model/indices.bin",
+   "size": 72660,
+   "sha256": "b3142e7ed406964caa4472b9f126f0b63d3bd58530c31f3b1412d866582aa8ce",
+   "origin": "owner's Ben Ultimatrix model data (new mesh and texture)"
+  },
+  {
+   "path": "ben-model/params.json",
+   "size": 51,
+   "sha256": "e5099ddfe6d68e8f67fe968fdfb45e67d3a49a2d81371fbc5902f3162ea7afae",
+   "origin": "owner's Ben Ultimatrix model data (new mesh and texture)"
+  },
+  {
+   "path": "ben-model/texture.bin",
+   "size": 2793600,
+   "sha256": "8a88d874f3e8a0ad772e5266fff38b0f3c62f7adea64789879b10ac97af4714b",
+   "origin": "owner's Ben Ultimatrix model data (new mesh and texture)"
+  },
+  {
+   "path": "ben-model/vertices.bin",
+   "size": 443916,
+   "sha256": "954ccff1b85270627721a8b40fcf3bf7d5df067488ff4339863f067496c912b6",
+   "origin": "owner's Ben Ultimatrix model data (new mesh and texture)"
+  },
+  {
+   "path": "deltas/global__a_plyr.xbx.cdelta",
+   "size": 60963,
+   "sha256": "9b4de30b0325ad107ebb3bba7fb2e3032782aa761bc41c21e3d8c1190a9ae1c0",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_bc.xbx.cdelta",
+   "size": 107513,
+   "sha256": "01b359a4c65d732e8b757ea1942132f2f26cccb477ea2dcf174401229347a570",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_ec.xbx.cdelta",
+   "size": 72433,
+   "sha256": "e517d80ad925cff4624b215dfbf7e0f1ebca2af386bd8ff11b892fa11672b603",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_hm.xbx.cdelta",
+   "size": 71571,
+   "sha256": "29283e330c4ccb6f1bf14f1e300f3de4672381976bf4079deed4b1def2f0c70b",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_sf.xbx.cdelta",
+   "size": 70468,
+   "sha256": "74f93ec989b765708e5a14f5dc2094886da53c1c0f9b55100ee5a5aaba550449",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_sm.xbx.cdelta",
+   "size": 110148,
+   "sha256": "6f0f61323712faa0eaed45d2cd5927ebbf11e4d48982b96c3c1b440d80cb877d",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/l_tokd__g_wayb.xbx.cdelta",
+   "size": 61872,
+   "sha256": "ea73cbf2ae8e52f3a0e16e143c83c9e345b662aedb5ef20fa5a891979e28564c",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_ubc.xbx.cdelta",
+   "size": 69308,
+   "sha256": "fd80aec8337004d2c841bccf120b322164bf34b9b4e808525526e85491245de5",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_uec.xbx.cdelta",
+   "size": 40953,
+   "sha256": "151a71d8149ad0cdbda24b666d8f2d584d7547c8df242056e65dc5b20ba3784a",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_uhm.xbx.cdelta",
+   "size": 55318,
+   "sha256": "17c58df66301c1c0fb587340e3b0a62925770cc01879719d75c844e1ab88342c",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_usf.xbx.cdelta",
+   "size": 50225,
+   "sha256": "e3bd5e3099205bdf6200c70142ba3c9e4751e219b4add92d020a70845e442b15",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "deltas/global__g_usm.xbx.cdelta",
+   "size": 50899,
+   "sha256": "9ee5aa279801dd9a19eafd4718bc0e9e671f61465d6a3ab8985d2531554f7138",
+   "origin": "additions to the game's own file (chest-tap clips, Ben's transformation), stored as a patch"
+  },
+  {
+   "path": "albedo/14934253.entry",
+   "size": 2793520,
+   "sha256": "686b25244751bd8f5c24c1b970562dee977a5eeebb08c3b983ec050047e3f0c4",
+   "origin": "Albedo (red) look of the new Ultimatrix texture"
+  },
+  {
+   "path": "albedo/76757ac1.entry",
+   "size": 65584,
+   "sha256": "142b757acbefbd168abc17c52f5c82d7ab9df48150f05d0b3154f4e21a5b0390",
+   "origin": "Albedo (red) look of the new Ultimatrix texture"
+  }
+ ]
+}

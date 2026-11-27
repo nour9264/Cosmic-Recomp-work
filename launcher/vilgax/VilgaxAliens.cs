@@ -12,7 +12,8 @@ namespace CosmicRecompi {
         // Aliens imported from Vilgax Attacks (tools/prepare_vilgax_import.py).
         // Each installation/vilgax/<name> bundle holds the form's package,
         // attack table, data records and registration scripts.
-        internal sealed class ImportedForm {public string Folder,Name;public int Id;}
+        internal const int UltimateCannonboltId=24;
+        internal const int UltimateWayBigId=25;
         // Only the first N forms: an earlier install had fewer imported aliens.
         static int ImportedLimit=int.MaxValue;
         internal static List<ImportedForm> ImportedForms(string installation) {
@@ -24,7 +25,9 @@ namespace CosmicRecompi {
                 if(!File.Exists(ids))continue;
                 string[] fields=File.ReadAllText(ids).Trim().Split(' ');
                 int id;
-                if(fields.Length!=2 || !int.TryParse(fields[1],out id) || id<20 || id>23)
+                if(fields.Length!=2 || !int.TryParse(fields[1],out id) || id<20 || id>UltimateWayBigId
+                    || (id==UltimateCannonboltId && fields[0]!="ultimatecannonbolt")
+                    || (id==UltimateWayBigId && fields[0]!="ultimatewaybig"))
                     throw new InvalidDataException("Unexpected imported form: "+folder);
                 forms.Add(new ImportedForm{Folder=folder,Name=fields[0],Id=id});
             }

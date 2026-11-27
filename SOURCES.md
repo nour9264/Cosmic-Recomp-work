@@ -56,7 +56,22 @@ The SDK also vendors code outside these submodules, including crypto, disasm, dx
 
 The original development setup retrieved Microsoft payloads using a local portable-msvc.py downloader from the [mmozeiko downloader family](https://gist.github.com/mmozeiko/7f3162ec2988e81e56d5c4e22cde9977), with local MSI/CAB extraction. That downloader is not distributed or required by the normal developer-tool workflow. Its exact external revision was not preserved, so no byte-for-byte match with today's gist is claimed. SHA-256 of the local downloader copy used: `1791cccca594ff083ce8d3e0a139e6156d2c312e24332a909e608010f0230a51`.
 
-Original assets come exclusively from the player's ISO. The supported XEX hash identifies the edition; it does not redistribute that executable. Runtime hashes are recorded in PROVENANCE.json and runtime/SHA256SUMS.txt; validation scope and limits are in ARCHITECTURE.md.
+The original game's assets come from the player's ISO. The supported XEX hash identifies the edition; it does not redistribute that executable. Alpha 9 additionally ships the extra content in `bundled-assets/` (see below); that is the repository owner's decision. Runtime hashes are recorded in PROVENANCE.json and runtime/SHA256SUMS.txt; validation scope and limits are in ARCHITECTURE.md.
+
+## Bundled content (Alpha 9, `bundled-assets/`)
+
+Every file is listed with its size, SHA-256 and origin in `bundled-assets/MANIFEST.json`; `docs/BUNDLED_ASSETS.md` explains the installation. Origins as stated by the repository owner:
+
+| Content | Origin |
+| --- | --- |
+| Four Arms (package, attacks, scripts) | the PS3 edition of the game |
+| Chromastone, Jetray, Goop, Cannonbolt (packages, attack tables, records) | *Ben 10: Alien Force - Vilgax Attacks* (Xbox 360), prepared by `tools/prepare_vilgax_import.py` and finished with `tools/cannonbolt` |
+| Ultimate Cannonbolt | the owner's Blender model and attacks; some effects and audio from *Ben 10: Protector of the Earth* (PS2) |
+| Interact animations of the Alien Force aliens and the five Ultimates | made in Blender by the owner, with the timing of the original aliens' clips; patches for the game's own files |
+| Ben's new Ultimatrix, Ultimate Way Big mesh and textures, cosmetic pictures, upgrade pictures, HUD art | the owner's Blender work and reference images supplied by the owner |
+| Ultimate Way Big and Ultimate Cannonbolt voices, Ben's transformation select sound | supplied by the owner; the select sound is from Vilgax Attacks |
+
+The ownership and licence status of third-party material in this table has not been checked by the project; the repository owner is responsible for it before any public release. The patches in `bundled-assets/deltas` apply only to the unmodified original files and contain the added clips and references to the original file's pieces, not a copy of the whole file.
 
 ## Alpha additions maintained by this project
 

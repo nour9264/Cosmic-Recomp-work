@@ -21,7 +21,7 @@ namespace CosmicRecompi {
   // effects=false gives an install from before imported sound effects existed.
   static byte[] Sounds(byte[] original,string game,bool effects){return Sounds(original,game,effects,int.MaxValue);}
   // limit: how many imported aliens to include (an earlier install had fewer).
-  static byte[] Sounds(byte[] original,string game,bool effects,int limit) {
+  static byte[] Sounds(byte[] original,string game,bool effects,int limit,int effectLimit=int.MaxValue) {
    byte[] updated=Sounds(original);
 #if COSMIC_VILGAX_ALIENS
    string text=Encoding.UTF8.GetString(updated);int slot=221;var lines=new StringBuilder();var attackLines=new StringBuilder();
@@ -36,7 +36,7 @@ namespace CosmicRecompi {
     }
     // Sound effects in the form's own FMOD project (package section 24).
     string sounds=Path.Combine(form.Folder,"sounds.txt");
-    if(!effects || !File.Exists(sounds))continue;
+    if(!effects || taken>effectLimit || !File.Exists(sounds))continue;
     foreach(string line in File.ReadAllLines(sounds)) {
      if(line.Length==0)continue;
      var match=Regex.Match(line,"^<sound name=\"([a-z0-9_]+)\" id=\"[0-9]+\" swpgroupid=\"0\" prjid=\"[a-z0-9_]+\"/>$");
@@ -76,7 +76,8 @@ namespace CosmicRecompi {
     bool earlier=false;
 #if COSMIC_VILGAX_ALIENS
     if(sounds)for(int k=1;k<AllAliensPatch.ImportedForms(Path.GetDirectoryName(game)).Count && !earlier;k++)
-     earlier=current==UltimateVoicePatch.Hash(Sounds(original,game,true,k));
+     earlier=current==UltimateVoicePatch.Hash(Sounds(original,game,true,k)) ||
+             current==UltimateVoicePatch.Hash(Sounds(original,game,true,int.MaxValue,k));
 #endif
     if(current!=entry.Value && !earlier && !(sounds && (current==UltimateVoicePatch.Hash(Sounds(original)) ||
        current==UltimateVoicePatch.Hash(Sounds(original,game,false)))))throw new IOException("Unknown voice-link edit: "+entry.Key);

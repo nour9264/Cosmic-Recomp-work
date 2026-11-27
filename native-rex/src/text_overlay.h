@@ -11,6 +11,7 @@
 #include <intrin.h>
 #include <rex/logging.h>
 
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -30,6 +31,7 @@
 #include "language_setting.h"
 
 namespace ben10::text_overlay {
+inline std::atomic<bool> upgrade_page_owns_text{false};
 struct Entry {
     std::string text;
     float x = 0, y = 0, width = 0, size = 50, red = 1, green = 1, blue = 1, alpha = 1, text_left = 0;
@@ -248,7 +250,8 @@ public:
         entry.green = Real(base, object + 92);
         entry.blue = Real(base, object + 96);
         entry.alpha = Opacity(base, object);
-        entry.centred = Word(base, object + 120) == 1;
+        const uint32_t align = Word(base, object + 120) & 7;
+        entry.centred = align == 1;
         entry.tick = GetTickCount64();
         // Keep only the button icon (and one space) in the original draw; our line goes after it.
         constexpr float kIcon = 30.0f, kGap = 6.0f;
@@ -270,6 +273,10 @@ public:
                 bits = _byteswap_ulong(bits);
                 std::memcpy(object_, &bits, 4);
                 entry.text_left = centre - total * 0.5f + kIcon + kGap;
+            } else if (language == 1 && align == 4 && english == "CONFIRM") {
+                // The R3 prompt anchors its remaining Cross icon at the right
+                // edge of the text box. Put the RTL label just to its left.
+                entry.text_left = entry.x + entry.width - kIcon - kGap - width;
             } else {
                 entry.text_left = entry.x + kIcon + kGap;
             }

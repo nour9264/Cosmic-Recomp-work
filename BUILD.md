@@ -32,7 +32,7 @@ Pop-Location
 
 # Place assets from your own supported copy in originals/ first.
 & "$root/toolchain/rexglue-sdk/bin/rexglue.exe" codegen native-rex/ben10_manifest.toml
-python tools/apply_game_integration.py --generated native-rex/generated/default
+python tools/apply_game_integration.py --generated native-rex/generated/default   # also applies tools/apply_photo_mode.py
 cmake -S native-rex -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_CXX_COMPILER=clang-cl "-DCMAKE_PREFIX_PATH=$root/toolchain/rexglue-sdk"
 cmake --build build/native --parallel 2

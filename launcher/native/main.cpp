@@ -80,10 +80,8 @@ static constexpr GameplayOption gameplayOptions[]={
     {"invert_pitch","Invert Up / Down",false},
     {"invert_yaw","Invert Left / Right",false},
     {"vibration","Vibration",true},
-    {"all_aliens","All Aliens",false},
-    {"hero_time","Hero Time (L3)",false},
-    {"albedo_hud_preview","Play as Albedo",false},
     {"background_controller_input","Background Controller Input",false},
+    {"show_hud","Show HUD",true},
 };
 
 // Music, SFX and Voice volumes live in the game's profile settings.dat:
@@ -633,25 +631,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR args, int) {
                     ImGui::SameLine(); if(ImGui::Button(T("Prepare game")))spawn(L"import");
                     ImGui::EndDisabled();
                     ImGui::TextWrapped(T("Select ISO, wait for validation, then prepare your game. Original game files stay on this computer."));
-                    if (fs::exists(root/"CosmicFourArmsBridge.exe") &&
-                        fs::exists(root/"four-arms-importer/prepare_four_arms_import.py")) {
-                        ImGui::SeparatorText(T("Optional PS3 content"));
-                        ImGui::BeginDisabled(!installed || fourArmsAvailable);
-                        if (ImGui::Button(T("Import Four Arms"))) spawn(L"import-four-arms");
-                        ImGui::EndDisabled();
-                        ImGui::TextWrapped("%s", fourArmsAvailable ? T("Four Arms is already installed.") :
-                            T("Select your extracted European PS3_GAME folder (BLES01110)."));
-                    }
-                    if (fs::exists(root/"CosmicVilgaxBridge.exe") &&
-                        fs::exists(root/"four-arms-importer/import_alien_force.py")) {
-                        ImGui::SeparatorText(T("Optional Alien Force content"));
-                        ImGui::BeginDisabled(!installed || !fourArmsAvailable || alienForceAvailable);
-                        if (ImGui::Button(T("Import Alien Force aliens"))) spawn(L"import-alien-force");
-                        ImGui::EndDisabled();
-                        ImGui::TextWrapped("%s", alienForceAvailable ? T("Alien Force aliens are already installed.") :
-                            !fourArmsAvailable ? T("Import Four Arms first.") :
-                            T("Select your extracted Ben 10 Alien Force: Vilgax Attacks Xbox 360 game folder."));
-                    }
                     ImGui::SeparatorText(T("Startup"));
                     if (ImGui::Checkbox(T("Skip intro logos"), &skipIntro)) {
                         auto path = installation()/"user/skip-intro.txt";

@@ -1,0 +1,15 @@
+<sound name="goop_acid_hose" id="0" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_goopershot" id="2" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_puddle_uppercut" id="15" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_splitkick" id="19" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_hurt" id="5" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_jump" id="6" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_land_big" id="8" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_land_small" id="9" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_light1" id="10" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_light2" id="11" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_light3" id="12" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_heavy1" id="12" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_heavy2" id="11" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_jump_double" id="6" swpgroupid="0" prjid="goopsnd"/>
+<sound name="goop_spit" id="12" swpgroupid="0" prjid="goopsnd"/>

@@ -49,10 +49,11 @@ class Code:
 BASE='cosmic_alien_base';EXTRA='cosmic_alien_extra';READY='cosmic_alien_ready'
 PENDING='cosmic_alien_pending';PAGE='cosmic_alien_page';ACTIVE='cosmic_alien_active'
 EXTRA_COUNT='cosmic_alien_extra_count'
+REMOVED='cosmic_alien_removed'   # forms that left the player's four and are waiting to be loaded again
 # Form IDs reserved for aliens imported from Vilgax Attacks (Chromastone first).
 IMPORTED_FORMS=[20,21,22,23]
 
-def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
+def authored(disable_rath=False,preload_resources=False,four_arms_probe=False,matrix_upgrades=False):
     if four_arms_probe and (disable_rath or not preload_resources):
         raise ValueError('Four Arms probe requires the current preload profile')
     identities=list(range(1,12))
@@ -60,6 +61,7 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
     extra_count=len(identities)-4-int(disable_rath)
     # Forms imported from Vilgax Attacks join the roster only when installed.
     imported=IMPORTED_FORMS if four_arms_probe else []
+    max_extra=extra_count+len(imported)+4   # room for forms that leave the player's four and become extras
     result=[]
     def save(name,args,c):c.done();result.append((crc(name),args,c.finish()))
     # Callback follows the original mission loader's completion convention.
@@ -84,8 +86,14 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
 
     c=Code()
     if preload_resources:
-        c.native('cosmic_all_aliens_enabled',15);c.num(14,1)
-        c.binary(0x10,14,15,14);c.false(14,'end')
+        if matrix_upgrades:
+            # Preload existing forms at the original safe mission-load
+            # boundary, including when the player purchases tier 5 later
+            # in this mission. The wheel input remains entitlement-gated.
+            c.call('CosmicMasterControlSync')
+        else:
+            c.native('cosmic_all_aliens_enabled',15);c.num(14,1)
+            c.binary(0x10,14,15,14);c.false(14,'end')
         c.get(13,ACTIVE);c.false(13,'start');c.jump('end');c.label('start')
         c.get(16,0x1729d192);c.false(16,'end');c.num(17,0)
         c.binary(0x13,17,16,17);c.false(17,'end')
@@ -154,10 +162,14 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
 
     c=Code();c.get(0,ACTIVE);c.false(0,'end');c.call('CosmicAlienRestore')
     c.get(1,0xf3d407b1);c.method(1,'getcurrentmission',[1],2)
-    c.get(3,EXTRA);c.get(4,'gFormData')
-    for i in range(1,extra_count+len(imported)+1):
+    c.get(3,EXTRA);c.get(4,'gFormData');c.get(25,BASE)
+    for i in range(1,max_extra+1):
         c.num(6,i);c.index(7,3,6)
-        if imported:c.false(7,'unloaded')
+        c.false(7,'unloaded')
+        # A form that is in the player's four now is unloaded by the game itself with the four.
+        for j in range(1,5):
+            c.num(26,j);c.index(27,25,26);c.binary(0x10,28,7,27)
+            c.false(28,'not_in_four_%d_%d'%(i,j));c.jump('skip_unload_'+str(i));c.label('not_in_four_%d_%d'%(i,j))
         c.index(8,4,7)
         c.get(9,0x93aca275);c.field(10,8,'character')
         c.method(9,'removecharacter',[9,10])
@@ -165,28 +177,127 @@ def authored(disable_rath=False,preload_resources=False,four_arms_probe=False):
         c.method(2,'unloaddata',[2,9,10,11])
         c.get(9,0x79c61e79);c.field(10,8,0x7fb535f8)
         c.method(2,'unloaddesc',[2,9,10])
-    if imported:c.label('unloaded')
-    for name in [BASE,EXTRA,READY,PENDING,PAGE,ACTIVE]+([EXTRA_COUNT] if imported else []):c.nil(1);c.put(1,name)
+        c.label('skip_unload_'+str(i))
+    c.label('unloaded')
+    for name in [BASE,EXTRA,READY,PENDING,PAGE,ACTIVE,REMOVED]+([EXTRA_COUNT] if imported else []):c.nil(1);c.put(1,name)
     c.label('end');save('CosmicAlienUnload',0,c)
+
+    # The saved four slots (BASE) follow whatever the player sets with the R3 form screen. Restoring them every frame
+    # would undo that change in the slot table while the game has already loaded the new form in place of the old one,
+    # so the old form's data is gone when its slot is used.
+    # Keeps the saved four equal to the player's own four. Once a change has stood for a while (the game has finished
+    # unloading the form that was swapped out) every form that left the four is loaded again as an extra, so it can be
+    # paged to; its data is gone after the swap.
+    c=Code();c.get(0,BASE);c.false(0,'end');c.get(1,'gFormHotKey');c.false(1,'end')
+    c.boolean(12,False)
+    for i in range(1,5):
+        c.num(2,i);c.index(4,1,2);c.false(4,'end');c.field(3,4,'formID');c.false(3,'end')
+        c.index(5,0,2);c.binary(0x11,6,3,5);c.false(6,'same_'+str(i));c.boolean(12,True);c.label('same_'+str(i))
+    c.false(12,'idle')
+    # A change: the saved four take it at once (paging must never put the old four back), the forms that left are queued
+    # and the wait before they are loaded again starts over.
+    c.get(13,REMOVED);c.false(13,'new_queue');c.jump('have_queue')
+    c.label('new_queue');c.table(13);c.put(13,REMOVED);c.label('have_queue')
+    for i in range(1,5):
+        c.num(2,i);c.index(5,0,2)
+        for j in range(1,5):
+            c.num(2,j);c.index(4,1,2);c.field(3,4,'formID');c.binary(0x10,6,5,3)
+            c.false(6,'differs_%d_%d'%(i,j));c.jump('kept_'+str(i));c.label('differs_%d_%d'%(i,j))
+        for k in range(1,9):
+            c.num(14,k);c.index(15,13,14);c.false(15,'put_%d_%d'%(i,k))
+            c.binary(0x10,16,15,5);c.false(16,'next_%d_%d'%(i,k));c.jump('kept_'+str(i))
+            c.label('put_%d_%d'%(i,k));c.store(13,14,5);c.jump('kept_'+str(i))
+            c.label('next_%d_%d'%(i,k))
+        c.label('kept_'+str(i))
+    for i in range(1,5):
+        c.num(2,i);c.index(4,1,2);c.field(3,4,'formID');c.store(0,2,3)
+    c.num(7,0);c.put(7,'cosmic_alien_swap_wait');c.jump('end')
+    c.label('idle')
+    c.get(13,REMOVED);c.false(13,'end')
+    c.get(7,'cosmic_alien_swap_wait');c.false(7,'init_wait');c.jump('have_wait')
+    c.label('init_wait');c.num(7,0);c.label('have_wait')
+    c.num(8,1);c.binary(0x0a,7,7,8);c.put(7,'cosmic_alien_swap_wait')
+    c.num(8,150);c.binary(0x12,9,7,8);c.false(9,'due');c.jump('end')
+    c.label('due')
+    for k in range(1,9):
+        c.num(14,k);c.index(5,13,14);c.false(5,'queue_done')
+        for j in range(1,5):
+            c.num(2,j);c.index(4,0,2);c.binary(0x10,6,5,4);c.false(6,'not_four_%d_%d'%(k,j));c.jump('skip_%d'%k)
+            c.label('not_four_%d_%d'%(k,j))
+        c.call('CosmicAlienReload',[5])
+        c.label('skip_%d'%k)
+    c.label('queue_done');c.nil(13);c.put(13,REMOVED);c.num(7,0);c.put(7,'cosmic_alien_swap_wait')
+    c.label('end');save('CosmicAlienFollow',0,c)
+
+    # Load one form again after it left the four and make sure it is on the extras list. Uses the original loader and a
+    # callback that, unlike the mission-load one, does not report to the mission loader.
+    c=Code();c.get(1,EXTRA);c.false(1,'end')
+    for k in range(1,max_extra+1):
+        c.num(2,k);c.index(3,1,2);c.false(3,'append_'+str(k))
+        c.binary(0x10,4,3,0);c.false(4,'next_'+str(k));c.jump('have')
+        c.label('append_'+str(k));c.store(1,2,0);c.jump('have')
+        c.label('next_'+str(k))
+    c.jump('end')
+    c.label('have')
+    c.get(4,'gFormData');c.index(8,4,0);c.false(8,'end')
+    c.get(5,PENDING);c.false(5,'no_pending');c.jump('has_pending')
+    c.label('no_pending');c.num(5,0)
+    c.label('has_pending');c.num(6,2);c.binary(0x0a,5,5,6);c.put(5,PENDING)
+    c.boolean(6,False);c.put(6,READY)
+    c.get(1,0xf3d407b1);c.method(1,'getcurrentmission',[1],2)
+    c.get(5,'CosmicAlienLateLoaded')
+    c.get(9,0x0bfbfd2d);c.field(10,8,'characterFile')
+    c.method(2,0xbc35779c,[2,9,10,5])
+    c.get(9,0x79c61e79);c.field(10,8,0x7fb535f8)
+    c.method(2,0x1a7328ab,[2,9,10,5])
+    c.label('end');save('CosmicAlienReload',1,c)
+
+    c=Code();c.get(1,PENDING);c.false(1,'end');c.num(2,0);c.binary(0x13,3,1,2);c.false(3,'end')
+    c.num(2,1);c.binary(0x0b,1,1,2);c.put(1,PENDING);c.num(2,0);c.binary(0x10,3,1,2);c.false(3,'end')
+    c.boolean(1,True);c.put(1,READY)
+    c.label('end');save('CosmicAlienLateLoaded',1,c)
 
     c=Code();c.native('cosmic_all_aliens_page',0)
     c.num(1,0);c.binary(0x12,2,0,1);c.false(2,'enabled')
+    # No paging input: while the player's own four are showing, keep the saved four equal to them; only a page that
+    # is currently showing extras is put back.
+    c.get(3,ACTIVE);c.false(3,'end');c.get(3,PAGE);c.num(4,0);c.binary(0x13,5,3,4);c.false(5,'follow')
     c.get(1,BASE);c.false(1,'end');c.call('CosmicAlienRestore');c.jump('end')
+    c.label('follow');c.call('CosmicAlienFollow');c.jump('end')
     c.label('enabled');c.get(1,ACTIVE);c.false(1,'load');c.jump('ready')
     c.label('load')
     if not preload_resources:c.call('CosmicAlienLoad')
     c.jump('end')
     c.label('ready');c.get(1,READY);c.false(1,'end');c.get(1,PAGE)
-    c.binary(0x11,2,0,1);c.false(2,'end');c.put(0,PAGE)
+    c.binary(0x11,2,0,1);c.false(2,'same_page');c.put(0,PAGE)
     c.num(1,0);c.binary(0x10,2,0,1);c.false(2,'extras')
     c.call('CosmicAlienRestore');c.jump('sound')
-    c.label('extras');c.get(1,EXTRA);c.get(2,'gFormHotKey')
+    # The extras on offer are the loaded ones that are not among the player's current four (BASE), so a form moved
+    # into the four with the R3 screen leaves the pages. A form moved out comes back with the next mission load,
+    # because its data is not loaded until then.
+    c.label('extras');c.get(9,EXTRA);c.get(10,BASE);c.table(1);c.num(11,1)
+    for idx in range(1,max_extra+1):
+        keep='keep_extra_'+str(idx);skip='skip_extra_'+str(idx)
+        c.num(12,idx);c.index(13,9,12);c.false(13,skip)
+        for j in range(1,5):
+            c.num(14,j);c.index(15,10,14);c.binary(0x10,16,13,15);c.false(16,keep+'_'+str(j));c.jump(skip)
+            c.label(keep+'_'+str(j))
+        c.store(1,11,13);c.num(12,1);c.binary(0x0a,11,11,12)
+        c.label(skip)
+    c.get(2,'gFormHotKey')
     c.num(3,1);c.binary(0x0b,4,0,3);c.num(3,4);c.binary(0x0c,4,4,3)
     for i in range(1,5):
         c.num(3,i);c.binary(0x0a,5,4,3);c.index(6,1,5)
+        if matrix_upgrades:
+            c.call('CosmicMatrixAllows',[6],result=8)
+            c.false(8,'locked_slot_'+str(i));c.jump('slot_ready_'+str(i))
+            c.label('locked_slot_'+str(i));c.nil(6)
+            c.label('slot_ready_'+str(i))
         c.index(7,2,3);c.fieldput(7,'formID',6)
     c.label('sound');c.get(1,0x2712f51f);c.emit(2<<8|5,0xf4b7b9fd)
     c.method(1,0x5e89deba,[1,2]);c.native('cosmic_all_aliens_trace')
+    c.jump('end')
+    c.label('same_page');c.num(1,0);c.binary(0x10,2,0,1);c.false(2,'end');c.call('CosmicAlienFollow')
     c.label('end');save('CosmicAlienUpdate',0,c)
     return result
 

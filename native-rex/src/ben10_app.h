@@ -17,6 +17,8 @@
 #include "gpu_frame_capture.h"
 #include "replay_input.h"
 #include "performance_overlay.h"
+#include "photo_overlay.h"
+#include "time_freeze.h"
 #include "pc_menu_bridge.h"
 #include "options_video_preview.h"
 #include "albedo_textures.h"
@@ -29,6 +31,8 @@
 #include "fov_runtime.h"
 #include "music_overlay.h"
 #include "ultimate_hud_overlay.h"
+#include "ucb_screen_flash.h"
+#include "ben_upgrade_frame.h"
 #include "menu_cursor.h"
 #include <rex/input/input_system.h>
 #include <rex/input/mnk/mnk_input_driver.h>
@@ -95,11 +99,17 @@ class Ben10App : public rex::ReXApp {
       }
     }
     constexpr int size=128, bytes=size*size*4;
-    std::vector<unsigned char> badge(bytes*2);
-    std::ifstream file(user/"options-ultimatrix.rgba",std::ios::binary);
-    const bool has_badges=file.read(reinterpret_cast<char*>(badge.data()),badge.size()) && file.peek()==EOF;
+    int badge_side=512;
+    std::vector<unsigned char> badge(badge_side*badge_side*4*2);
+    std::ifstream file(user/"options-ultimatrix-hd.rgba",std::ios::binary);
+    bool has_badges=bool(file.read(reinterpret_cast<char*>(badge.data()),badge.size())) && file.peek()==EOF;
+    if(!has_badges) {
+      badge_side=size;badge.resize(bytes*2);
+      std::ifstream stock(user/"options-ultimatrix.rgba",std::ios::binary);
+      has_badges=bool(stock.read(reinterpret_cast<char*>(badge.data()),badge.size())) && stock.peek()==EOF;
+    }
     if(has_badges)
-      for(auto& id:options_badges_)id=atlas->AddCustomRect(size,size);
+      for(auto& id:options_badges_)id=atlas->AddCustomRect(badge_side,badge_side);
     std::vector<unsigned char> cursor(bytes);
     std::ifstream cursor_file(user/"omnitrix-cursor.rgba",std::ios::binary);
     const bool has_cursor=cursor_file.read(reinterpret_cast<char*>(cursor.data()),cursor.size()) &&
@@ -137,7 +147,26 @@ class Ben10App : public rex::ReXApp {
       ben10::controls::key_icons.emplace_back(std::string(name,strnlen(name,16)),
           atlas->AddCustomRect(key_side,key_side));
     }
-    if(has_badges || has_cursor || key_count) {
+    constexpr int frame_side=256,frame_bytes=frame_side*frame_side*4;
+    std::vector<unsigned char> frame_pixels(frame_bytes*16);
+    std::ifstream frame_file(user/"hud-upgrade-frames.rgba",std::ios::binary);
+    const bool has_frames=bool(frame_file.read(reinterpret_cast<char*>(frame_pixels.data()),frame_pixels.size())) && frame_file.peek()==EOF;
+    if(has_frames)for(auto& id:hud_upgrade_frames_)id=atlas->AddCustomRect(frame_side,frame_side);
+    constexpr int portrait_side=256,portrait_bytes=portrait_side*portrait_side*4;
+    std::vector<unsigned char> portrait_pixels(portrait_bytes*4);
+    std::ifstream portrait_file(user/"upgrade-portraits.rgba",std::ios::binary);
+    const bool has_portraits=bool(portrait_file.read(reinterpret_cast<char*>(portrait_pixels.data()),portrait_pixels.size())) && portrait_file.peek()==EOF;
+    if(has_portraits)for(int i=0;i<4;++i)upgrade_portraits_[i]=atlas->AddCustomRect(portrait_side,portrait_side);
+    std::vector<unsigned char> master_control_pixels(portrait_bytes);
+    std::ifstream master_control_file(user/"master-control-portrait.rgba",std::ios::binary);
+    const bool has_master_control=bool(master_control_file.read(reinterpret_cast<char*>(master_control_pixels.data()),master_control_pixels.size())) && master_control_file.peek()==EOF;
+    if(has_master_control)upgrade_portraits_[4]=atlas->AddCustomRect(portrait_side,portrait_side);
+    std::vector<unsigned char> cosmetic_pixels(portrait_bytes*3);
+    std::ifstream cosmetic_file(user/"cosmetic-previews.rgba",std::ios::binary);
+    const bool has_cosmetics=bool(cosmetic_file.read(reinterpret_cast<char*>(cosmetic_pixels.data()),cosmetic_pixels.size())) && cosmetic_file.peek()==EOF;
+    if(has_cosmetics)for(int i=0;i<3;++i)upgrade_portraits_[5+i]=atlas->AddCustomRect(portrait_side,portrait_side);
+    ben10::upgrade_frame::ready=has_frames;
+    if(has_badges || has_cursor || key_count || has_frames || has_portraits || has_master_control || has_cosmetics) {
       unsigned char* pixels=nullptr;int width=0,height=0;
       atlas->GetTexDataAsRGBA32(&pixels,&width,&height);
       const auto copy=[&](ImFontAtlasRectId id,const unsigned char* image,int side=size) {
@@ -148,7 +177,11 @@ class Ben10App : public rex::ReXApp {
       };
       for(uint32_t i=0;i<key_count;++i)
         copy(ben10::controls::key_icons[i].second,key_pixels+i*(16+key_bytes)+16,key_side);
-      if(has_badges)for(int i=0;i<2;++i)copy(options_badges_[i],badge.data()+i*bytes);
+      if(has_portraits)for(int i=0;i<4;++i)copy(upgrade_portraits_[i],portrait_pixels.data()+i*portrait_bytes,portrait_side);
+      if(has_master_control)copy(upgrade_portraits_[4],master_control_pixels.data(),portrait_side);
+      if(has_cosmetics)for(int i=0;i<3;++i)copy(upgrade_portraits_[5+i],cosmetic_pixels.data()+i*portrait_bytes,portrait_side);
+      if(has_badges)for(int i=0;i<2;++i)copy(options_badges_[i],badge.data()+i*badge_side*badge_side*4,badge_side);
+      if(has_frames)for(int i=0;i<16;++i)copy(hud_upgrade_frames_[i],frame_pixels.data()+i*frame_bytes,frame_side);
       if(has_cursor) {
         copy(menu_cursor_sprite_,cursor.data());
         copy(menu_cursor_albedo_sprite_,albedo_cursor.data());
@@ -157,18 +190,21 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    ucb_flash_=std::make_unique<ben10::ucb_screen_flash::Flash>(drawer);
     std::ifstream preference(user_data_root() / "enhanced-subtitles.txt");
     std::string subtitle_mode;
     preference >> subtitle_mode;
     if (subtitle_mode != "off")
       cinematic_subtitles_ = std::make_unique<Ben10CinematicSubtitles>(drawer,subtitle_font_);
     og_text_=std::make_unique<Ben10OgText>(drawer,pc_video_font_?pc_video_font_:subtitle_font_);
-    if(ben10_pc_menu::enabled())options_video_=std::make_unique<ben10_options::VideoPage>(drawer,pc_video_font_,options_badges_);
+    if(ben10_pc_menu::enabled())options_video_=std::make_unique<ben10_options::VideoPage>(drawer,pc_video_font_,options_badges_,upgrade_portraits_);
     // Profiling/replay tools keep their own measurements; ordinary play gets
     // a passive overlay driven by the original game's swap counter.
     if((!std::getenv("BEN10_REPLAY_INPUT_PATH") || std::getenv("BEN10_TEST_PERFORMANCE_OVERLAY")) && !std::getenv("BEN10_HIDE_PERFORMANCE_OVERLAY"))
       performance_overlay_=std::make_unique<Ben10PerformanceOverlay>(drawer);
+    photo_overlay_=std::make_unique<ben10::photo::Overlay>(drawer,runtime()?runtime()->user_data_root()/"screenshots":std::filesystem::path("screenshots"));
     ultimate_prongs_=std::make_unique<ben10::ultimate_hud::Prongs>(drawer);
+    if(ben10::upgrade_frame::ready)hud_upgrade_art_=std::make_unique<ben10::upgrade_frame::Art>(drawer,hud_upgrade_frames_);
     if(ben10_pc_menu::enabled())
       music_overlay_=std::make_unique<ben10::music_overlay::Overlay>(drawer,pc_video_font_,options_badges_,[this]{return immediate_drawer();});
     if(menu_cursor_sprite_!=ImFontAtlasRectId_Invalid)
@@ -417,7 +453,7 @@ class Ben10App : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
-    window()->SetTitle("Cosmic Recomp Alpha 8 (community)");
+    window()->SetTitle("Cosmic Recomp Alpha 9 (community)");
 #ifdef _WIN32
     auto* handle = window()->GetNativeWindowHandle();
     SetCosmicWindowIcon(static_cast<HWND>(handle));
@@ -432,7 +468,39 @@ class Ben10App : public rex::ReXApp {
       }
     }
 #endif
-    ben10_fault_probe::Install();
+    // Photo Mode: what the game reports to it, the real pad reader, and the clock the frozen world stops on.
+    ben10::photo::gameplay_provider = []() -> bool {
+      return ben10_pc_menu::mission_active.load() && !ben10_pc_menu::pause_menu_active.load() && !ben10_pc_video::visible.load() &&
+             !ben10_pc_menu::menu_mouse::WheelOpen();
+    };
+    ben10::photo::invert_provider = [](bool& pitch, bool& yaw) {
+      namespace gameplay = ben10_pc_menu::gameplay_preview;
+      const auto bits = gameplay::snapshot.load();
+      pitch = (bits & 1u) != 0; yaw = (bits & 2u) != 0;
+    };
+    ben10::photo::style_provider = []() -> int {
+      return ben10::albedo_textures::CurrentButtonIcons() == ben10::albedo_textures::ButtonIcons::PlayStation ? 1 : 0;
+    };
+    ben10::time_freeze::Install();
+    ben10::photo::pictures_dir = user_data_root() / "screenshots";
+    if (auto* photo_input = static_cast<rex::input::InputSystem*>(runtime()->input_system()))
+      photo_input->SetActiveCallback([] { return ben10::photo::GameFocused() && !ben10::photo::BlockGameInput(); });
+    ben10::photo::pad_provider = [](ben10::photo::Pad& pad) -> bool {
+      auto* host = ben10_pc_menu::runtime.load();
+      auto* input = host ? static_cast<rex::input::InputSystem*>(host->input_system()) : nullptr;
+      rex::input::X_INPUT_STATE state{};
+      if (!input) return false;
+      ben10::photo::reading.store(true);
+      const auto result = input->GetState(0, &state);
+      ben10::photo::reading.store(false);
+      if (result != 0) return false;
+      auto stick = [](int16_t v) { const float f = v / 32767.0f; return std::fabs(f) < 0.18f ? 0.0f : f; };
+      pad.lx = stick(state.gamepad.thumb_lx); pad.ly = stick(state.gamepad.thumb_ly);
+      pad.rx = stick(state.gamepad.thumb_rx); pad.ry = stick(state.gamepad.thumb_ry);
+      pad.lt = state.gamepad.left_trigger / 255.0f; pad.rt = state.gamepad.right_trigger / 255.0f;
+      pad.buttons = state.gamepad.buttons;
+      return true;
+    };    ben10_fault_probe::Install();
     for(uint32_t address : {0x8210BB88u,0x8229A9F8u,0x8229AA20u,0x8229AA48u,
                             0x8229AA60u,0x8229AA78u,0x8229AA90u,0x8229AAA8u}) {
       if(!runtime()->function_dispatcher()->GetFunction(address))
@@ -618,7 +686,9 @@ class Ben10App : public rex::ReXApp {
     options_video_.reset();
     menu_cursor_.reset();
     performance_overlay_.reset();
+    photo_overlay_.reset();
     ultimate_prongs_.reset();
+    ucb_flash_.reset();
     cinematic_subtitles_.reset();
     if (capture_worker_.joinable()) { capture_worker_.request_stop();capture_worker_.join(); }
   }
@@ -648,11 +718,17 @@ class Ben10App : public rex::ReXApp {
   ImFont* subtitle_font_=nullptr;
   std::array<ImFontAtlasRectId,2> options_badges_{ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid};
   std::unique_ptr<Ben10PerformanceOverlay> performance_overlay_;
+  std::unique_ptr<ben10::photo::Overlay> photo_overlay_;
   std::unique_ptr<ben10::ultimate_hud::Prongs> ultimate_prongs_;
+  std::unique_ptr<ben10::ucb_screen_flash::Flash> ucb_flash_;
   ImFontAtlasRectId menu_cursor_sprite_=ImFontAtlasRectId_Invalid;
   ImFontAtlasRectId menu_cursor_albedo_sprite_=ImFontAtlasRectId_Invalid;
   std::unique_ptr<ben10::MenuCursor> menu_cursor_;
   std::unique_ptr<Ben10CinematicSubtitles> cinematic_subtitles_;
   std::unique_ptr<Ben10OgText> og_text_;
+  // 0-3 Ultimatrix upgrade pictures, 4 Master Control, 5-7 Cosmetics page (Play as Albedo, Realistic Ultimatrix, Potis Altiare).
+  std::array<ImFontAtlasRectId,8> upgrade_portraits_{{ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid,ImFontAtlasRectId_Invalid}};
+  std::array<ImFontAtlasRectId,16> hud_upgrade_frames_{};
+  std::unique_ptr<ben10::upgrade_frame::Art> hud_upgrade_art_;
   std::jthread capture_worker_;
 };

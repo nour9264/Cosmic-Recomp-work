@@ -1,5 +1,20 @@
 # Cosmic Recomp
 
+## Alpha 9 — Upgrades, Ultimate Forms & Photo Mode
+
+- **Upgrade Forms:** press **Y / Triangle** on the original Upgrade Forms screen to open the Upgrades menu. Spend the game's Upgrade Points on six **Ultimatrix levels** (Rath, Four Arms, the Alien Force aliens, the Ultimate aliens, **Master Control**, cooldown reduction), on **Health** and **Energy** (three levels each, +20% per level, with wider HUD arcs) and on **Cosmetics**. The old *All Aliens* and *Hero Time* switches in Options are gone: owning the level replaces them.
+- **Cosmetics:** *Play as Albedo*, *Transformation Animation* (Ben's own transformation pose before the switch), *Realistic Ultimatrix* and the *Potis Altiare* piece, bought once and switched on or off in the same page.
+- **More aliens:** **Cannonbolt** joins Chromastone, Jetray and Goop, and **Ultimate Cannonbolt** is a full Ultimate form with its own attacks, effects, sounds and voice. **Ultimate Way Big** is playable in the final battle: press **L3** to transform and **L3** again to return; it deals 1.5x damage and has Ben and Albedo looks and a cyan beam.
+- **Photo Mode:** a free camera with the game frozen (**F9**, **D-pad Down**, or the **PHOTO MODE** row in the pause menu). It saves PNG screenshots, hides the HUD (**N**) and the scene lights (**T**), and **Options → Gameplay → Show HUD** hides the HUD during play.
+- **Everything included:** the extra aliens, pictures and voices now ship with the launcher. After **Prepare game** with your Xbox 360 ISO the launcher installs them itself; Ultimate Way Big, Ben's new Ultimatrix (green, realistic and Potis Altiare devices) and the new transformation and Ultimate chest-tap motions are built into your own game files by small patches that only apply to the unmodified originals. The optional PS3 and Alien Force import buttons are gone from the launcher; nothing more than the ISO is needed.
+- **Interact animations:** the four Alien Force aliens (Chromastone, Jetray, Goop, Cannonbolt) and the five Ultimates (Humungousaur, Big Chill, Swampfire, Echo Echo, Spider Monkey; Ultimate Cannonbolt shares Cannonbolt's) now have a lever/button animation made in Blender (`docs/INTERACT_ANIMATIONS.md`).
+- **Locks and roster:** Rath, Four Arms, the four Alien Force aliens and the Ultimates stay locked until their Ultimatrix level is bought (checked by the form's ID); aliens swapped with **R3** follow into the Master Control pages; **Photo Mode** does not start while a game screen is open.
+- **Fixes:** a script crash when a variable held a number instead of an object (seen with Ampfibian), a crash after swapping a form with R3 and transforming, a crash when an effect could not be created (Ultimate Swampfire double jump), the frame-limit change now also sets the game's refresh rate at once, the launcher status file no longer fails when Windows holds it open, and tracing code no longer slows ordinary frames.
+
+**Known issues:** Several effects and sounds of Ultimate Cannonbolt come from *Ben 10: Protector of the Earth* (PS2); rights are the owner's decision before a public release. A crash when transforming into Ultimate Humungousaur in one Rome level was seen once and its cause is not known. Nothing in this version has been played from an installer build yet.
+
+**Building:** see `docs/BUILD_ALPHA9.md`. The test app is assembled with `tools/stage_test_app.py`; bundled content is described in `docs/BUNDLED_ASSETS.md`.
+
 ## Alpha 8.5 — Alien Force Aliens & Ten Languages
 
 - **Alien Force aliens:** Chromastone, Jetray and Goop on All Aliens page 4, with their own attacks, effects, R3 ring pictures and holograms. Jetray glides and double jumps; Goop double jumps. In the launcher, **Setup → Import Alien Force aliens** builds them from your own extracted *Ben 10 Alien Force: Vilgax Attacks* Xbox 360 folder, as the Four Arms import does.

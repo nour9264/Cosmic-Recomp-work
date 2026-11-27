@@ -31,10 +31,7 @@ namespace CosmicRecompi {
             }
         }
         static void Status(string value) {
-            string path = Path.Combine(Root, "launcher-status.txt");
-            File.WriteAllText(path + ".new", value, new UTF8Encoding(false));
-            if (File.Exists(path)) File.Replace(path + ".new", path, null);
-            else File.Move(path + ".new", path);
+            InstalledGame.PublishLauncherStatus(Root, value);
         }
         internal static void WaitForParent(string[] args) {
             if(args.Length==1)return;
@@ -100,7 +97,9 @@ namespace CosmicRecompi {
                                 foreach(string source in Directory.GetFiles(form.Folder)) {
                                     string name=Path.GetFileName(source);
                                     if(!(name.StartsWith("g_") && name.EndsWith(".xbx")) && !(name.StartsWith("atk_") && name.EndsWith(".ddf")))continue;
-                                    string destination=Path.Combine(name.EndsWith(".ddf")?Path.Combine(global,"scripts"):global,name);
+                                    string packageFolder=form.Id==AllAliensPatch.UltimateWayBigId
+                                        ? Path.Combine(installation,"game","l_tokd") : global;
+                                    string destination=Path.Combine(name.EndsWith(".ddf")?Path.Combine(global,"scripts"):packageFolder,name);
                                     if(File.Exists(destination) && SameBytes(source,destination))continue;
                                     File.Copy(source,destination+".cosmic-new",true);
                                     if(File.Exists(destination))File.Delete(destination);
@@ -135,8 +134,14 @@ namespace CosmicRecompi {
 #endif
 #if COSMIC_VILGAX_ALIENS
                             // The player's four slots, two pages of extras, plus pages for imported aliens.
-                            int imported=AllAliensPatch.ImportedForms(InstalledGame.Installation(Root)).Count;
+                            var forms=AllAliensPatch.ImportedForms(InstalledGame.Installation(Root));
+                            int imported=forms.FindAll(form=>form.OnWheel).Count;
                             if(imported>0)start.EnvironmentVariables["BEN10_ALIEN_PAGES"]=(1+(8+imported+3)/4).ToString();
+                            start.EnvironmentVariables.Remove("BEN10_ULTIMATE_WAY_BIG_FORM");
+                            if(forms.Exists(form=>form.Id==AllAliensPatch.UltimateWayBigId))
+                                start.EnvironmentVariables["BEN10_ULTIMATE_WAY_BIG_FORM"]="1";
+                            string voice=Path.Combine(InstalledGame.Installation(Root),"vilgax","ultimatecannonbolt","transform.wav");
+                            if(File.Exists(voice))start.EnvironmentVariables["BEN10_ULTIMATE_CANNONBOLT_VOICE"]=voice;
 #endif
                             if(configureProcess!=null)configureProcess(start);
                         })) {

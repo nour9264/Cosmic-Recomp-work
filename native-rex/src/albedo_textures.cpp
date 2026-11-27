@@ -1,6 +1,7 @@
 #include "albedo_textures.h"
 
 #include "albedo_hud.h"
+#include "ultimate_way_big.h"
 #include "keyboard_mouse_runtime.h"
 #include "frame_metrics.h"
 #include <rex/system/xmemory.h>
@@ -39,13 +40,13 @@ void SetWayBigBeamAppearance(bool player, bool swapped) {
   way_big_beam_swapped[player].store(swapped, std::memory_order_relaxed);
 }
 
-bool SwapWayBigBeamTint(uint32_t texture, const std::array<uint32_t, 4>& colors) {
+WayBigBeamTint SelectWayBigBeamTint(uint32_t texture, const std::array<uint32_t, 4>& colors) {
   switch (texture) {
     case 0xf273c4c5: case 0x81e80184: case 0x547ee6d8:
     case 0xb5d3be15: case 0xbbfde535: case 0xcf13ed75:
       break;
     default:
-      return false;
+      return WayBigBeamTint::Stock;
   }
 
   // The emitter holds a copy of the stock ABGR ramp. Match its colored
@@ -91,7 +92,9 @@ bool SwapWayBigBeamTint(uint32_t texture, const std::array<uint32_t, 4>& colors)
       REXLOG_INFO("Way Big live beam: texture={:08X} colors={:08X},{:08X},{:08X},{:08X} player={} boss={} swapped={}",
                   texture, colors[0], colors[1], colors[2], colors[3], player, boss, swapped);
   }
-  return swapped;
+  if (recognized && player && ultimate_way_big::active.load(std::memory_order_relaxed))
+    return WayBigBeamTint::Cyan;
+  return swapped ? WayBigBeamTint::SwapRedGreen : WayBigBeamTint::Stock;
 }
 
 static std::atomic<uint64_t> way_big_beam_start{0};
@@ -547,7 +550,7 @@ inline std::vector<Texture> ReadPack(const std::filesystem::path& path) {
     read(item.key); read(item.width); read(item.height); read(item.format);
     read(item.base_size); read(item.mip_size);
     read(item.prefix_hash); read(item.base_hash); read(item.mip_hash);
-    if (!file || !item.width || item.width > 1024 || !item.height || item.height > 1024 ||
+    if (!file || !item.width || item.width > 2048 || !item.height || item.height > 2048 ||
         (item.format != 18 && item.format != 20) ||
         item.base_size < 4096 || item.base_size > 2 * 1024 * 1024 || (item.base_size & 4095) ||
         item.mip_size > 2 * 1024 * 1024 || (item.mip_size & 4095)) return {};
@@ -762,7 +765,7 @@ void ApplyPack(rex::memory::Memory* mem, uint32_t flags, uint32_t size,
   if constexpr (Pack != 0) {
     if ((width != 64 && width != 128) || height != width || format != 20) return;
   }
-  if (width < 32 || height < 32 || width > 1024 || height > 1024 ||
+  if (width < 32 || height < 32 || width > 2048 || height > 2048 ||
       (width & (width - 1)) || (height & (height - 1))) return;
 
   // Many draws bind the same pages. Cache both matches and misses for the

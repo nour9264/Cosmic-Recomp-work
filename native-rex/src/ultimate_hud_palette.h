@@ -2,11 +2,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include "ultimate_way_big.h"
 
 uint64_t Ben10SubmittedFrames();
 
 namespace ben10::ultimate_hud {
 inline std::atomic<bool> active{false};
+inline bool Active() {
+  return active.load(std::memory_order_relaxed) || ultimate_way_big::active.load(std::memory_order_relaxed);
+}
 inline thread_local uint32_t texture_key = 0;
 // Swap count when the circular HUD last drew; the Ultimate prongs follow it.
 inline std::atomic<uint64_t> dial_frame{0};
@@ -38,6 +42,6 @@ constexpr uint32_t Recolor(uint32_t fetch, uint32_t key) {
 }
 
 inline uint32_t FetchWord(uint32_t fetch) {
-  return texture_key && active.load(std::memory_order_relaxed) ? Recolor(fetch, texture_key) : fetch;
+  return texture_key && Active() ? Recolor(fetch, texture_key) : fetch;
 }
 }

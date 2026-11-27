@@ -16,7 +16,12 @@ inline LONG CALLBACK Handler(EXCEPTION_POINTERS* exception) {
   // Do not report the SDK's ordinary protected physical-page notifications.
   const bool low_guest=(address>=0x100000000ULL && address<0x100010000ULL) ||
       (address>=0x200000000ULL && address<0x200010000ULL);
-  const bool invalid_guest=address>=0x130000000ULL && address<0x180000000ULL;
+  bool invalid_guest=address>=0x130000000ULL && address<0x180000000ULL;
+  if(!invalid_guest && address>=0x100010000ULL && address<0x1E0000000ULL) {
+    // Any other unbacked guest address: protected physical pages are committed, so only free or reserved ones count.
+    MEMORY_BASIC_INFORMATION info{};
+    invalid_guest=VirtualQuery(reinterpret_cast<void*>(address),&info,sizeof(info)) && info.State!=MEM_COMMIT;
+  }
   if(!low_guest && !invalid_guest)return EXCEPTION_CONTINUE_SEARCH;
   static thread_local bool reporting=false;if(reporting)return EXCEPTION_CONTINUE_SEARCH;
   reporting=true;
@@ -41,9 +46,9 @@ inline LONG CALLBACK Handler(EXCEPTION_POINTERS* exception) {
     const auto* guest=reinterpret_cast<const uint8_t*>(0x100000000ULL);
     auto word=[&](uint32_t at) { uint32_t v;std::memcpy(&v,guest+at,4);return _byteswap_ulong(v); };
     char chain[400]{};size_t used=0;uint32_t sp=c->r1.u32;
-    for(int i=0;i<18 && sp>=0x70000000u && sp<0x80000000u && used+12<sizeof(chain);++i) {
+    for(int i=0;i<18 && sp>=0x70000000u && sp<0x70190000u && used+12<sizeof(chain);++i) {
       const uint32_t next=word(sp);
-      if(next<=sp || next>=0x80000000u)break;
+      if(next<=sp || next>=0x70190000u)break;
       used+=std::snprintf(chain+used,sizeof(chain)-used,"%08X ",word(next-8));
       sp=next;
     }
@@ -58,6 +63,9 @@ inline LONG CALLBACK Handler(EXCEPTION_POINTERS* exception) {
       REXLOG_ERROR("Cosmic fault memory {} {:08X}: {}",label,at,text);
     };
     dump("r29",c->r29.u32,24);
+    dump("r31",c->r31.u32,24);
+    {MEMORY_BASIC_INFORMATION info{};const uint32_t table=c->r31.u32>=0x10000&&VirtualQuery(guest+c->r31.u32,&info,sizeof(info))&&info.State==MEM_COMMIT?word(c->r31.u32+28):0;
+     if(table)dump("r31+28 table",table,16);}
     {MEMORY_BASIC_INFORMATION info{};const uint32_t table=c->r29.u32>=0x10000&&VirtualQuery(guest+c->r29.u32,&info,sizeof(info))&&info.State==MEM_COMMIT?word(c->r29.u32+28):0;
      if(table)dump("r29+28 table",table,16);}
   }

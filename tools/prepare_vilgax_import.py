@@ -7,6 +7,7 @@ game's g_<code>.xbx layout. Only the user's own files are read; no game data
 enters Git. The result is unverified until it is tested in game.
 """
 import argparse
+import math
 import os
 from pathlib import Path
 import re
@@ -20,7 +21,7 @@ from prepare_all_aliens_candidate import Code, decode, encode
 from prepare_pause_menu_extension import records
 from wheel_icon_texture import icon_texture
 
-ALIENS = {'chromastone': 'cs', 'jetray': 'jr', 'brainstorm': 'bs', 'goop': 'gp'}
+ALIENS = {'chromastone': 'cs', 'jetray': 'jr', 'brainstorm': 'bs', 'goop': 'gp', 'cannonbolt': 'cb'}
 LEVEL = 'l_anur'
 
 # Vilgax Attacks material commands are {kind, texture, value}; this game uses
@@ -74,24 +75,31 @@ def convert_mesh(record, xbox_reference, shader=None):
     shader; effect meshes keep Vilgax Attacks' own value (2, the unlit
     blended effect shader both games share)."""
     layout, vertex_count, index_count, vertices, indices, trailer = mesh_parts(record)
-    if trailer[:4] != bytes(4) or len(trailer) < 28:
+    if trailer[:4] != bytes(4):
         raise ValueError('Unexpected mesh trailer')
-    descriptor = struct.unpack_from('>6I', trailer, 4)
-    if descriptor[2] & 0xffff or descriptor[5] & 0xffff:
-        raise ValueError('Unexpected draw descriptor')
-    commands = bytearray(struct.pack('>5I', descriptor[0] if shader is None else shader, descriptor[1],
-                                     descriptor[2] | descriptor[5] >> 16, descriptor[3], descriptor[4]))
-    cursor = 28
-    while cursor + 12 <= len(trailer):  # Some trailers end without a zero command.
-        kind, = struct.unpack_from('>I', trailer, cursor)
-        if kind == 0:
-            break
-        texture, value = struct.unpack_from('>II', trailer, cursor + 4)
-        if kind not in MATERIAL_KINDS:
-            raise ValueError(f'Unknown material command {kind}')
-        commands += struct.pack('>4I', MATERIAL_KINDS[kind], 0, texture,
-                                0xffffffff if kind == 1 else value)
-        cursor += 12
+    draw_count = record[21]
+    if not draw_count:
+        raise ValueError('Missing mesh draws')
+    commands = bytearray()
+    textures = []
+    cursor = 4
+    for _ in range(draw_count):
+        descriptor = struct.unpack_from('>6I', trailer, cursor)
+        if descriptor[2] & 0xffff or descriptor[5] & 0xffff:
+            raise ValueError('Unexpected draw descriptor')
+        commands += struct.pack('>5I', descriptor[0] if shader is None else shader, descriptor[1],
+                                descriptor[2] | descriptor[5] >> 16, descriptor[3], descriptor[4])
+        cursor += 24
+        material_count = (descriptor[5] >> 16) & 0xff
+        for _ in range(material_count):
+            kind, texture, value = struct.unpack_from('>3I', trailer, cursor)
+            if kind not in MATERIAL_KINDS:
+                raise ValueError(f'Unknown material command {kind}')
+            commands += struct.pack('>4I', MATERIAL_KINDS[kind], 0, texture,
+                                    0xffffffff if kind == 1 else value)
+            if kind != 2:
+                textures.append(texture)
+            cursor += 12
     if any(trailer[cursor:]):
         raise ValueError('Unexpected bytes after material commands')
     # No terminator: the draw's command count is in its third word, and the
@@ -103,6 +111,7 @@ def convert_mesh(record, xbox_reference, shader=None):
     metadata = record[36:372] + commands
     vertex_at = (40 + len(metadata) + 31) & ~31
     index_at = (vertex_at + len(vertices) + 31) & ~31
+    # Xbox records use one vertex stream for all draw ranges.
     header = struct.pack('>III', layout, vertex_count, 1)
     header += struct.pack('<I', metadata_address + vertex_at - 376)
     header += struct.pack('>I', index_count)
@@ -113,9 +122,7 @@ def convert_mesh(record, xbox_reference, shader=None):
     result += bytes(index_at - len(result)) + indices
     if mesh_buffers(result, xbox=True)[1:] != (vertices, indices):
         raise ValueError('Converted mesh failed round-trip validation')
-    return result, [struct.unpack_from('>I', commands, at + 8)[0]
-                    for at in range(20, len(commands), 16)
-                    if struct.unpack_from('>I', commands, at)[0] != 5]
+    return result, textures
 
 
 def convert_skin(record, vertex_count, xbox_reference):
@@ -175,7 +182,7 @@ def bank(section_id, align_log2, records, flags=lambda record: 0):
     return bytes(result)
 
 
-def package(template, sections):
+def package(template, sections, payload_order=None):
     """Outer package: same container as table banks, sections keyed by number."""
     keys = sorted(sections)
     alignment = 1 << struct.unpack_from('>H', template, 12)[0]
@@ -188,10 +195,13 @@ def package(template, sections):
             cursor += 1
         directory += struct.pack('>I', cursor)
     payload = bytearray()
-    for key in ordered:
+    offsets = {}
+    for key in (ordered if payload_order is None else payload_order):
         payload += bytes((-len(payload)) % alignment)
-        directory += struct.pack('>3I', key, len(sections[key]), len(payload))
+        offsets[key] = len(payload)
         payload += sections[key]
+    for key in ordered:
+        directory += struct.pack('>3I', key, len(sections[key]), offsets[key])
     payload += bytes((-len(payload)) % alignment)
     base = (32 + len(directory) + alignment - 1) // alignment * alignment
     header = bytearray(template[:32])
@@ -236,7 +246,12 @@ def prepare(vilgax, cosmic, name):
     channels = channel_records(animation[9])
     bones, = struct.unpack_from('>H', skeletons[skeleton_key])
     for clip in entries(animation[13], True).values():
-        if struct.unpack_from('>I', clip, 76)[0] != bones:
+        if name == 'cannonbolt':
+            source_ids = {struct.unpack_from('>I', skeletons[skeleton_key], 52 + i * 44)[0] & 0xffffff
+                          for i in range(bones)}
+            if not set(bone_ids(clip)) <= source_ids:
+                raise ValueError('Cannonbolt animation references an unknown bone')
+        elif struct.unpack_from('>I', clip, 76)[0] != bones:
             raise ValueError('Animation does not match the skeleton')
         streamed_clip(clip, channels)
 
@@ -257,7 +272,9 @@ def prepare(vilgax, cosmic, name):
     special_clips = {crc(f'{name}_{clip}') for clip in SPECIAL_CLIPS[name].values()}
     flag_bank, flag_clips, flag_rows = remap_animation_flags(animation[9], animation[13], special_clips)
     channel_bank, clip_bank = merge_channels(flag_bank, flag_clips, effects['curves'] + flag_rows,
-                                             len(flag_rows))
+                                             len(flag_rows), lunge_clip(cosmic, name, flag_clips))
+    if name == 'cannonbolt':
+        channel_bank, clip_bank = cannonbolt_visibility(channel_bank, clip_bank)
     sections = {
         0: bank(0, 7, images, lambda record: 4),
         3: bank(3, 7, color_records, lambda record: 1 if record[:4] == b'\0\1\0\0' else 0),
@@ -271,7 +288,7 @@ def prepare(vilgax, cosmic, name):
     sound_lines = b''
     if name in SPECIAL_SOUNDS_ENABLED:
         sections[24], sound_lines = sound_project(vilgax, vaps_rows(native[24]), name)
-    return package(template, sections), dict(
+    return package(template, sections, sorted(sections) if name == 'cannonbolt' else None), dict(
         mesh=f'{mesh_key:08x}', skeleton=f'{skeleton_key:08x}', bones=bones,
         vertices=vertex_count, textures=[f'{key:08x}' for key in textures],
         clips=len(entries(animation[13], True)), effect_nodes=len(effects['nodes']),
@@ -362,6 +379,8 @@ EFFECT_TREES['goop'] = {0x549d5666: 0x9f8ccf10, 0xcaf9c3c5: 0x93997af2, 0x239a66
 # airborne (Tri Shot), 9718b112 three flying bolts (Tail Zap, the whipzap
 # clip). Sonic dash has no tree.
 EFFECT_TREES['jetray'] = {0x549d5666: 0x88f8c328, 0x239a66f0: 0x6c9dd55c, 0xba93374a: 0x9718b112}
+# Burnout's original dust/trails use the particle component supported by both games.
+EFFECT_TREES['cannonbolt'] = {0xcaf9c3c5: 0xf69eafe4}
 # The eye beams hung from Jetray's head weapon (rotated into bone space).
 # Here trees follow his feet. Vilgax Attacks' capture has the beam start at
 # (-0.09, 1.24, 0.27) from his feet, level, 12 m long: same height and
@@ -429,6 +448,7 @@ NODE_REVISION = 0x0b
 EFFECT_PACKAGE = 0x3a416c07
 
 
+SPECIAL_REACH['cannonbolt'] = {0x549d5666: 2.5, 0x239a66f0: 3.0, 0xba93374a: 4.5, 0xcaf9c3c5: 3.0}
 SPECIAL_LIFETIME = {'chromastone': {0x549d5666: 2.0, 0x239a66f0: 3.0, 0xba93374a: 2.0, 0xcaf9c3c5: 1.5}}
 MISSING_NODE_TYPES = {0x9210498f, 0x02e1a005, 0xe2c9bc42, 0x80ec768c, 0x8a0d47c4, 0xd3476a13}
 # Archetype efd9e2dc (the prismatic dome a64f48dc; same groups in both games)
@@ -688,14 +708,168 @@ def remap_animation_flags(channel_bank, clip_bank, special_clips):
             build_vaps(13, struct.unpack_from('>H', clip_bank, 12)[0], clips), extra)
 
 
-def merge_channels(channel_bank, clip_bank, curves, extra_count=0):
+# Goop has no lunge of his own in Vilgax Attacks: his range attacks ran to the enemy. His travel clip is built here from
+# another alien's range lunge in this game: for every bone the two skeletons share (bone ids are game-wide), the source clip's
+# rotation track; Goop's own idle pose supplies everything else (positions, scales and his extra bones), so his proportions
+# stay his. The clip carries no flag channel, like the originals' travel clips.
+LUNGE_SOURCES = {}  # Experiment (Goop from Water Hazard's lunge, 'goop': ('g_wh.xbx', 'atk_far_fwd_travel_01')) deformed him; off.
+LUNGE_CLIP = 'atk_lunge_01'
+
+
+def bone_ids(clip):
+    count, = struct.unpack_from('>I', clip, 76)
+    return [struct.unpack_from('>H', clip, 88 + 2 * index)[0] for index in range(count)]
+
+
+def cannonbolt_visibility(channel_bank, clip_bank):
+    """Apply Vilgax Attacks' ball/body events using the paired skeleton branches."""
+    channels = vaps_rows(channel_bank)
+    clips = vaps_rows(clip_bank)
+    original_channels = [data for _, _, data in channels]
+    idle = next(clip for _, _, clip in clips if clip.startswith(b'idle_01\0'))
+    ball_id, body_id = 193, 31
+    ball_idle = struct.unpack_from('>3I', idle, 216 + 12 * bone_ids(idle).index(ball_id))
+    ball_on, body_on = 0x2bd41ee1, 0x692ca718
+    rolling_at_start = {'run_01', 'run_out_01', 'land_run_01',
+                        'burnout_charging_01', 'burnout_run_01', 'burnout_out_01'}
+    output = []
+    for key, flags, source in clips:
+        ids = bone_ids(source)
+        if body_id not in ids:  # The clavicle overlays never own visibility.
+            output.append((key, flags, source))
+            continue
+        name = source[:64].split(bytes(1))[0].decode('ascii')
+        begin, end = animation_time_range(source, original_channels)
+        events_index = struct.unpack_from('>I', source, 80)[0]
+        transitions = {}
+        if events_index != 0xffffffff:
+            for event in flag_frames(original_channels[events_index]):
+                for signal in event[5:]:
+                    if signal in (ball_on, body_on):
+                        frame_time = struct.unpack('>f', struct.pack('>I', event[0]))[0]
+                        transitions[min(end, max(begin, frame_time))] = signal == ball_on
+        clip = bytearray(source)
+        if ball_id not in ids:
+            struct.pack_into('>H', clip, 88 + 2 * len(ids), ball_id)
+            ids.append(ball_id)
+            struct.pack_into('>2I', clip, 72, len(ids), len(ids))
+            clip.extend(struct.pack('>3I', *ball_idle))
+        visible = name in rolling_at_start
+        if name == 'balldash_01':
+            visible = True  # Its ball-on marker is one tick after the clip begins.
+        for bone_id in (body_id, ball_id):
+            scale_offset = 224 + 12 * ids.index(bone_id)
+            scale_index = struct.unpack_from('>I', clip, scale_offset)[0]
+            scale_data = original_channels[scale_index]
+            assert scale_data[:4] == bytes.fromhex('0c045003')
+            keys = list(struct.iter_unpack('>4f', scale_data[8:]))
+            def scale_at(t):
+                if t <= keys[0][0]:
+                    return keys[0][1:]
+                for first, last in zip(keys, keys[1:]):
+                    if t <= last[0]:
+                        blend = (t - first[0]) / (last[0] - first[0])
+                        return tuple(a + (b - a) * blend for a, b in zip(first[1:], last[1:]))
+                return keys[-1][1:]
+            times = {begin, end, *(key[0] for key in keys if begin <= key[0] <= end)}
+            for time in transitions:
+                times.update((max(begin, time - 1), time))
+            samples = []
+            state = visible
+            for time in sorted(times):
+                state = transitions.get(time, state)
+                factor = 1.0 if state == (bone_id == ball_id) else 0.0001
+                scale = scale_at(time)
+                if bone_id == ball_id and name in {'run_01', 'burnout_run_01'}:
+                    # Match the original starting vertical size on all axes.
+                    scale = (scale_at(begin)[1],) * 3
+                samples.append(struct.pack('>4f', time, *(value * factor for value in scale)))
+            new_scale = scale_data[:4] + struct.pack('>2H', len(samples), len(samples)) + b''.join(samples)
+            struct.pack_into('>I', clip, scale_offset, len(channels))
+            channels.append((crc(f'cannonbolt_{name}_{bone_id}_visibility'), 0, new_scale))
+        if name in {'run_01', 'burnout_run_01'}:
+            # The older game spun the ball outside the animation. Bake one
+            # seamless revolution around its lateral axis into the run cycle.
+            rotation_offset = 220 + 12 * ids.index(ball_id)
+            rotation_index = struct.unpack_from('>I', clip, rotation_offset)[0]
+            base = original_channels[rotation_index]
+            assert base[:4] == bytes.fromhex('10025002') and end > begin
+            x, y, z, w, _ = struct.unpack_from('>3hbB', base, 8)
+            x, y, z, w = x / 32767, y / 32767, z / 32767, w / 127
+            norm = math.sqrt(x*x + y*y + z*z + w*w)
+            x, y, z, w = (value / norm for value in (x, y, z, w))
+            first, last = int(begin / 160), int(end / 160)
+            samples = []
+            for frame in range(first, last + 1):
+                angle = -math.pi * (frame - first) / (last - first)
+                c, sn = math.cos(angle), math.sin(angle)
+                q = (x*c + w*sn, y*c + z*sn, z*c - y*sn, w*c - x*sn)
+                samples.append(struct.pack('>3hbB', *(round(v*32767) for v in q[:3]),
+                                           round(q[3]*127), frame))
+            channel = base[:4] + struct.pack('>2H', len(samples), len(samples)) + b''.join(samples)
+            struct.pack_into('>I', clip, rotation_offset, len(channels))
+            channels.append((crc(f'cannonbolt_{name}_roll'), 0, channel))
+        output.append((key, flags, bytes(clip)))
+    # The game stores channel references as bank directory indices.
+    buckets = max(1, len(channels) // 4)
+    order = sorted(range(len(channels)), key=lambda i: (channels[i][0] % buckets, channels[i][0]))
+    remap = {index: position for position, index in enumerate(order)}
+    remapped = []
+    for key, flags, clip in output:
+        clip = bytearray(clip)
+        for offset in [80] + list(range(216, len(clip), 4)):
+            index = struct.unpack_from('>I', clip, offset)[0]
+            if index != 0xffffffff:
+                struct.pack_into('>I', clip, offset, remap[index])
+        remapped.append((key, flags, bytes(clip)))
+    alignment = lambda bank: struct.unpack_from('>H', bank, 12)[0]
+    return (build_vaps(9, alignment(channel_bank), [channels[i] for i in order]),
+            build_vaps(13, alignment(clip_bank), remapped))
+
+
+def lunge_clip(cosmic, name, clip_bank):
+    """(key, flags, clip, extra channel rows, patches) for merge_channels, or None."""
+    if name not in LUNGE_SOURCES:
+        return None
+    package, source_name = LUNGE_SOURCES[name]
+    source_file = cosmic / 'global' / package
+    if not source_file.is_file():
+        return None
+    sections = entries(source_file.read_bytes())
+    source_channels = channel_records(sections[9])
+    source = next((clip for clip in table(sections[13]).values()
+                   if clip[:64].split(bytes(1))[0].decode('ascii') == source_name), None)
+    if source is None:
+        return None
+    base_key = crc(f'{name}_idle_01')
+    flags, base = next((flags, clip) for key, flags, clip in vaps_rows(clip_bank) if key == base_key)
+    clip = bytearray(base)
+    clip[0:64] = LUNGE_CLIP.encode('ascii').ljust(64, bytes(1))
+    struct.pack_into('>I', clip, 80, 0xffffffff)
+    source_position = {ident: position for position, ident in enumerate(bone_ids(source))}
+    rows, patches, placed = [], {}, {}
+    for position, ident in enumerate(bone_ids(base)):
+        if ident not in source_position:
+            continue
+        index, = struct.unpack_from('>I', source, 216 + 12 * source_position[ident] + 4)
+        if index == 0xffffffff:
+            continue
+        if index not in placed:
+            placed[index] = len(rows)
+            rows.append((crc(f'{name}_lunge_channel_{index}'), 0, source_channels[index]))
+        patches[216 + 12 * position + 4] = placed[index]
+    return crc(f'{name}_{LUNGE_CLIP}'), flags, bytes(clip), rows, patches
+
+
+def merge_channels(channel_bank, clip_bank, curves, extra_count=0, lunge=None):
     """Animation channels plus effect curves in one section 9.
 
     Clips address channels by directory position, so renumber them after
     the effect curves are sorted in by bucket."""
     channels = vaps_rows(channel_bank)
     tagged = [(key, flags, data, ('clip', index)) for index, (key, flags, data) in enumerate(channels)]
-    tagged += [(key, flags, data, ('curve', index)) for index, (key, flags, data) in enumerate(curves)]
+    lunge_rows = lunge[3] if lunge else []
+    tagged += [(key, flags, data, ('curve', index)) for index, (key, flags, data) in enumerate(list(curves) + lunge_rows)]
     buckets = max(1, len(tagged) // 4)
     ordered = sorted(tagged, key=lambda row: (row[0] % buckets, row[0], row[3]))
     moved = {row[3][1]: position for position, row in enumerate(ordered) if row[3][0] == 'clip'}
@@ -715,6 +889,18 @@ def merge_channels(channel_bank, clip_bank, curves, extra_count=0):
             elif index != 0xffffffff:
                 struct.pack_into('>I', clip, at, moved[index])
         clips.append((key, flags, bytes(clip)))
+    if lunge:
+        key, flags, clip, _, patches = lunge
+        clip = bytearray(clip)
+        bones, = struct.unpack_from('>I', clip, 76)
+        for at in range(216, 216 + bones * 12, 4):
+            index, = struct.unpack_from('>I', clip, at)
+            if at in patches:
+                struct.pack_into('>I', clip, at, placed[len(curves) + patches[at]])
+            elif index != 0xffffffff:
+                struct.pack_into('>I', clip, at, moved[index])
+        clips.append((key, flags, bytes(clip)))
+        clips = bucket_sorted(clips)
     return merged, build_vaps(13, struct.unpack_from('>H', clip_bank, 12)[0], clips)
 
 
@@ -774,6 +960,12 @@ OUTBURST_SLOT = 0xba93374a
 # shortcut: constant speed even with the stick released.
 TRAVELLING_SPECIALS = {('jetray', 0x239a66f0): (2.5, True), ('jetray', 0x549d5666): (2.5, True),
                        ('jetray', 0xba93374a): (2.5, True), ('jetray', 0xcaf9c3c5): (4.0, False)}
+TRAVELLING_SPECIALS.update({
+    ('cannonbolt', 0x549d5666): (4.5, False),
+    ('cannonbolt', 0x239a66f0): (5.0, False),
+    ('cannonbolt', 0xcaf9c3c5): (6.0, True),
+})
+EFFECT_SIGNALS[0xf69eafe4] = ([0xe6d20ed3], [0x38bf0e63])
 OUTBURST_TREE = 0xed76b19f  # crc32('chromastone_outburst')
 OUTBURST_SIDES = ((-0.7, 1.6, 0.0), (0.7, 1.6, 0.0))
 OUTBURST_EMITTER = {
@@ -1203,8 +1395,8 @@ def special_effects(vilgax, name, mesh_reference, color_reference, four_arms_nod
 
     if archive is None:
         return dict(nodes=converted, meshes={}, textures={}, colors={}, curves=[])
-    mesh_bank = dict(table(archive[4]))
-    color_bank = dict(table(archive[3]))
+    mesh_bank = dict(table(archive[4])) if name != 'cannonbolt' else {}
+    color_bank = dict(table(archive[3])) if name != 'cannonbolt' else {}
     if name == 'goop':
         mesh_bank[GOOP_DROP] = scale_mesh(mesh_bank[0x866df60c], GOOP_DROP_SCALE)
         color_bank[GOOP_DROP] = color_bank[0x866df60c]
@@ -1261,7 +1453,7 @@ def special_effects(vilgax, name, mesh_reference, color_reference, four_arms_nod
                 cursor += size
     if not textures <= set(images):
         raise ValueError('Effect mesh texture missing')
-    curves = [(key, flags, data) for key, flags, data in vaps_rows(archive[9]) if key in converted]
+    curves = [(key, flags, data) for key, flags, data in vaps_rows(archive[9]) if key in converted] if 9 in archive else []
     return dict(nodes=converted, meshes=meshes, textures=images, colors=colors, curves=curves)
 
 
@@ -1273,8 +1465,8 @@ def special_effects(vilgax, name, mesh_reference, color_reference, four_arms_nod
 # format this game's other alien banks use), with the special events
 # pointed at the alien's samples. sounds.txt adds their sounds.ddf entries.
 SOUND_PROJECTS = {'chromastone': ('chrmstn', 'swpchrom.fsb'), 'jetray': ('jetrays', 'swpjetry.fsb'),
-                  'goop': ('goopsnd', 'swpgoop.fsb')}
-SPECIAL_SOUNDS_ENABLED = {'chromastone', 'jetray', 'goop'}
+                  'goop': ('goopsnd', 'swpgoop.fsb'), 'cannonbolt': ('cboltva', 'swpcbolt.fsb')}
+SPECIAL_SOUNDS_ENABLED = {'chromastone', 'jetray', 'goop', 'cannonbolt'}
 FOUR_ARMS_PROJECT = b'fourarm'
 # Slot: (sound name, Four Arms event index, Vilgax Attacks sample).
 SPECIAL_SOUNDS = {
@@ -1294,6 +1486,12 @@ SPECIAL_SOUNDS = {
         0x239a66f0: ('goop_goopershot', 2, 'goop_goopershot.wav'),
         0xba93374a: ('goop_puddle_uppercut', 15, 'puddle_uppercut_01.wav'),
         0xcaf9c3c5: ('goop_splitkick', 19, 'goop_split_kick.wav')}}
+SPECIAL_SOUNDS['cannonbolt'] = {
+    0x549d5666: ('cbolt_ball_dash', 0, 'cbolt_ball_dash_01.wav'),
+    0x239a66f0: ('cbolt_superball', 2, 'cbolt_superball.wav'),
+    0xba93374a: ('cbolt_powerflop', 15, 'cbolt_powerflop.wav'),
+    0xcaf9c3c5: ('cbolt_burnout', 19, 'canbolt_burnout_chargeup_loop.'),
+}
 # Four Arms' events by their samples (four_aftershock, concussion clap,
 # seismic upper, spinning crusher).
 FOUR_ARMS_EVENT_SAMPLES = {0: 62, 2: 64, 15: 81, 19: 82}
@@ -1311,6 +1509,9 @@ SOUND_KINDS = {
     'chromastone': {'hurt': 'hitreact', 'jump': 'jumpexert', 'land': 'chrmstone_land', 'light': 'chrmstone_ligh'},
     'jetray': {'hurt': 'hitreact', 'jump': 'jumpexert', 'land': 'jumpland', 'light': 'atkreact_(01|19|22|23)'},
     'goop': {'hurt': 'hitreact', 'jump': 'jumpexert', 'land': 'jumpland', 'light': '(light|heavy)_attack'}}
+SOUND_PREFIX['cannonbolt'] = 'cbolt'
+SOUND_KINDS['cannonbolt'] = {'hurt': 'hitreact', 'jump': 'jumpexert',
+                            'land': 'land_feet|jumpland', 'light': 'canbolt_light'}
 FOUR_ARMS_SAMPLE_KINDS = {'hurt': range(65, 70), 'jump': range(70, 74), 'land': range(74, 77), 'light': range(77, 81)}
 # Four Arms' sound names in records, and the form's sound that replaces each.
 SOUND_SWAPS = {'four_hurt': 'hurt', 'four_jump': 'jump', 'four_light1': 'light1', 'four_light2': 'light2',
@@ -1415,7 +1616,7 @@ def sound_project(vilgax, four_arms_rows, name):
     return build_vaps(24, 5, rows), lines.encode('ascii')
 
 
-WHEEL_ICONS = {'chromastone': 0x05e1c713, 'jetray': 0xb458a502, 'goop': 0x7206e5bc}
+WHEEL_ICONS = {'chromastone': 0x05e1c713, 'jetray': 0xb458a502, 'goop': 0x7206e5bc, 'cannonbolt': 0xf3b76348}
 FOUR_ARMS_WHEEL_ICON = 0xbc29c46d
 FOUR_ARMS_RING_PICTURE = 0xc6baa5e5  # The R3 ring's 256x256 picture (gtex_s.xbx)
 HOLOGRAM_FUNCTION = 0xb09930d3  # Hologram index -> texture key; the registration calls it with Four Arms' index
@@ -1423,7 +1624,7 @@ HOLOGRAM_FUNCTION = 0xb09930d3  # Hologram index -> texture key; the registratio
 # descriptor in sounds.ddf, whose sample the launcher adds to every voice bank.
 NAME_CALLOUT_EVENT = 0x8768763b
 FOUR_ARMS_VOICE = 0x6b894905  # Each mission's own resolver for Four Arms.
-CALLOUT_SAMPLES = {'chromastone': b'chromastone.wav', 'jetray': b'jetray.wav', 'goop': b'goop.wav'}
+CALLOUT_SAMPLES = {'chromastone': b'chromastone.wav', 'jetray': b'jetray.wav', 'goop': b'goop.wav', 'cannonbolt': b'cannonbolt.wav'}
 
 
 def callout_bank(vilgax, voice_bank, name):
@@ -1475,7 +1676,7 @@ PLATFORM_FORM = 0x4b5b4447
 PLATFORM_UPGRADES = 0x0fa12932
 FOUR_ARMS_INIT = 0x39a05949
 FOUR_ARMS_ATTACKS = 0x2c00026b
-FORM_IDENTITIES = {'chromastone': (20, 13.0), 'jetray': (21, 14.0), 'goop': (22, 15.0)}  # Form ID, roster ordinal.
+FORM_IDENTITIES = {'chromastone': (20, 13.0), 'jetray': (21, 14.0), 'goop': (22, 15.0), 'cannonbolt': (23, 16.0)}  # Form ID, roster ordinal.
 UPGRADE_TABLE = 0xe6db5005
 
 # Four Arms' animations, by the matching Vilgax Attacks animation. Special
@@ -1491,6 +1692,12 @@ CLIP_ROLES = {
     'atk_ground_fwd_travel_01': 'run_01', 'atk_ground_fwd_01': 'punch_03',
     'atk_ground_fwd_out_01': 'punch_out_03', 'airattack_01': 'airattack_01',
 }
+# Experiment: the clip the far/ground/counter attacks play while the alien travels to the enemy. Four Arms has a dedicated
+# travel clip there; Vilgax Attacks has none, so these slots hold its run clip. COSMIC_TRAVEL_CLIP names another
+# Vilgax Attacks clip (e.g. jump_01) to try in its place.
+if os.environ.get('COSMIC_TRAVEL_CLIP'):
+    for _travel in [name for name in CLIP_ROLES if name.endswith('_travel_01')]:
+        CLIP_ROLES[_travel] = os.environ['COSMIC_TRAVEL_CLIP']
 # Hit reactions in Four Arms' combat configuration ("person" record).
 REACTION_CLIPS = {
     'gethit_front_01': 'gethit_01', 'gethit_behind_01': 'gethit_01', 'knockback_01': 'fall_01',
@@ -1566,9 +1773,14 @@ SPECIAL_CLIPS = {'chromastone': {0x549d5666: 'gatlinggun_01', 0x239a66f0: 'laser
                           0xba93374a: 'puddleuppercut_01', 0xcaf9c3c5: 'splitkick_01'}}
 
 
+SPECIAL_CLIPS['cannonbolt'] = {0x549d5666: 'balldash_01', 0x239a66f0: 'superball_01',
+                              0xba93374a: 'powerflop_01', 0xcaf9c3c5: 'burnout_run_01'}
+
 # Lead-in and recovery animations of specials that have them.
 SPECIAL_EDGES = {'chromastone': {0x239a66f0: ('laserbeam_in_01', 'laserbeam_out_01')},
                  'jetray': {0xcaf9c3c5: ('sonicdash_in_01', 'sonicdash_out_01')}}
+
+SPECIAL_EDGES['cannonbolt'] = {0xcaf9c3c5: ('burnout_in_01', 'burnout_out_01')}
 
 
 def crc(name):
@@ -1613,6 +1825,10 @@ def attack_table(four_arms, four_arms_clips, prefix, clips, specials):
     """Four Arms' attack records with this form's IDs and animations."""
     names = {key: CLIP_ROLES.get(clip[:64].split(b'\0')[0].decode('ascii'))
              for key, clip in four_arms_clips.items()}
+    if prefix in LUNGE_SOURCES and crc(f'{prefix}_{LUNGE_CLIP}') in clips:
+        for key, clip in four_arms_clips.items():
+            if clip[:64].split(bytes(1))[0].decode('ascii').endswith('_travel_01'):
+                names[key] = LUNGE_CLIP
     records, ids = bytearray(four_arms[:4]), {}
     for at in range(4, len(four_arms), 224):
         record = bytearray(four_arms[at:at + 224])
@@ -1699,21 +1915,29 @@ def registration_rows(prefix, form_id, ordinal, character_key, donor, init, atta
     rows = []
     # The R3 ring's picture and centre hologram are the owner's private art (COSMIC_RING_PICTURES names the folder
     # they were added to gtex_s.xbx from). Without them the form keeps Four Arms' stock ring pictures.
-    own_pictures = bool(os.environ.get('COSMIC_RING_PICTURES'))
+    own_pictures = prefix == 'cannonbolt' or bool(os.environ.get('COSMIC_RING_PICTURES'))
     arguments = {crc('fourarms'): form, 0x43149521: character_key,
                  FOUR_ARMS_INIT: crc(f'Cosmic_{prefix}_init'),
                  FOUR_ARMS_WHEEL_ICON: WHEEL_ICONS[prefix],
                  0x41400000: struct.unpack('>I', struct.pack('>f', ordinal))[0]}
     if own_pictures:
-        arguments[FOUR_ARMS_RING_PICTURE] = crc(f'Cosmic_{prefix}_ring')
+        arguments[FOUR_ARMS_RING_PICTURE] = (WHEEL_ICONS[prefix] if prefix == 'cannonbolt'
+                                             else crc(f'Cosmic_{prefix}_ring'))
         arguments[HOLOGRAM_FUNCTION] = crc(f'Cosmic_{prefix}_hologram')
     register = replace_arguments(donor, arguments,
                                  [(b'g_fa\0', b'g_' + ALIENS[prefix].encode() + b'\0'),
                                   (b'atk_fa.ddf\0', b'atk_' + ALIENS[prefix].encode() + b'.ddf\0')])
     rows.append((crc(f'Cosmic_{prefix}_register'), 0, register))
+    hologram_key = crc(f'Cosmic_{prefix}_holo')
+    if prefix == 'cannonbolt':
+        picture_dir = os.environ.get('COSMIC_RING_PICTURES')
+        if not picture_dir or not (Path(picture_dir) / 'cannonbolt_holo.png').is_file():
+            hologram_key = WHEEL_ICONS[prefix]
     # The ring's centre hologram: the form's own function returns its texture key (gtex_s.xbx).
     if own_pictures:
-        rows.append((crc(f'Cosmic_{prefix}_hologram'), 0, struct.pack('>4I', 0x305, crc(f'Cosmic_{prefix}_holo'), 0x322, 0x21)))
+        rows.append((crc(f'Cosmic_{prefix}_hologram'), 0, struct.pack('>4I', 0x305,
+                           hologram_key,
+                           0x322, 0x21)))
     # Upgrade costs: Four Arms' block from the platform upgrade setup.
     rows.append((crc(f'Cosmic_{prefix}_costs'), 0, replace_arguments(costs, {crc('fourarms'): form})))
     rows.append((crc(f'Cosmic_{prefix}_init'), 0, replace_arguments(
@@ -1780,6 +2004,8 @@ def prepare_bundle(vilgax, cosmic, installation, name):
 
     clip_data = entries(entries((vilgax / 'global' / f'a_{code}.xbx').read_bytes())[13], True)
     clips = set(clip_data)
+    if name in LUNGE_SOURCES and (cosmic / 'global' / LUNGE_SOURCES[name][0]).is_file():
+        clips.add(crc(f'{name}_{LUNGE_CLIP}'))
     if name in GLIDERS | DOUBLE_JUMPERS:
         set_record = cd_animation_set(set_record, {key: data[:64].split(bytes(1))[0].decode('ascii') for key, data in clip_data.items()})
     bundle = installation / 'four-arms'

@@ -30,11 +30,41 @@ namespace CosmicRecompi {
                 if(shell!=null)System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
             }
         }
+        // The extra aliens, pictures and voices ship with the launcher (bundled-assets/); this copies them into the installation
+        // with the bundled Python importer. Called after the ISO import and by the "install-bundled" action (repair).
+        internal static void InstallBundledAssets(bool required) {
+            string bundle = Path.Combine(Root, "bundled-assets");
+            string importer = Path.Combine(Root, "four-arms-importer");
+            string python = Path.Combine(importer, "python.exe");
+            string script = Path.Combine(importer, "import_bundled_assets.py");
+            if (!Directory.Exists(bundle) || !File.Exists(python) || !File.Exists(script)) {
+                if (required) throw new IOException("The bundled aliens are missing from this installation of the launcher.");
+                Diagnostic("Bundled assets are not part of this package; skipping.");
+                return;
+            }
+            string installation = InstalledGame.Installation(Root);
+            Status("Installing the bundled aliens, pictures and voices…");
+            var start = new System.Diagnostics.ProcessStartInfo(python) {
+                Arguments = "-B \"" + script + "\" --installation \"" + installation + "\" --bundle \"" + bundle + "\"",
+                WorkingDirectory = importer,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using (var process = System.Diagnostics.Process.Start(start)) {
+                string output = process.StandardOutput.ReadToEnd();
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                Diagnostic(output);
+                if (process.ExitCode != 0) {
+                    Diagnostic(error);
+                    throw new IOException("Installing the bundled aliens failed. See the launcher log for details.");
+                }
+            }
+        }
         static void Status(string value) {
-            string path = Path.Combine(Root, "launcher-status.txt");
-            File.WriteAllText(path + ".new", value, new UTF8Encoding(false));
-            if (File.Exists(path)) File.Replace(path + ".new", path, null);
-            else File.Move(path + ".new", path);
+            InstalledGame.PublishLauncherStatus(Root, value);
         }
         internal static void WaitForParent(string[] args) {
             if(args.Length==1)return;
@@ -282,6 +312,11 @@ namespace CosmicRecompi {
                             Status("Alien Force aliens prepared.");
                         }
                         break;
+                    case "install-bundled":
+                        if (!InstalledGame.Ready(Root)) throw new IOException("Prepare your Xbox 360 game first.");
+                        InstallBundledAssets(true);
+                        Status("Bundled aliens installed.");
+                        break;
                     case "import":
                         {
                             string selected = Path.Combine(Root, "selected-iso.txt");
@@ -300,6 +335,8 @@ namespace CosmicRecompi {
                                 Status("Preparing: " + (total == 0 ? 0 : done * 99 / total) + "% — " + file);
                             });
                             Directory.Move(staging, destination); InstalledGame.CompleteImport(Root);
+                            try { InstallBundledAssets(false); }
+                            catch (Exception bundledError) { Diagnostic("Bundled assets: " + bundledError); }
                             try {CreateDesktopShortcut();Status("Preparing: 100% — Ready to play. Desktop shortcut created.");}
                             catch(Exception shortcutError) {Diagnostic("Shortcut creation failed: "+shortcutError);Status("Preparing: 100% — Ready to play. Desktop shortcut could not be created.");}
                         }

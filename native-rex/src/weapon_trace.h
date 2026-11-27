@@ -5,6 +5,8 @@
 // does not flood the log. Used to check imported aliens' hit volumes and
 // effect roots, which attach through the same weapon slots.
 
+#include "lookup_guard.h"
+#include "ucb_screen_flash_state.h"
 #include <rex/logging.h>
 #include <atomic>
 #include <cstdint>
@@ -36,6 +38,7 @@ inline uint8_t Byte(const uint8_t* base, uint32_t guest) {
 // sub_821417F8(person, slot, weapon hash): the node lookup result.
 inline void Lookup(uint32_t person, uint32_t slot, uint32_t weapon, uint32_t handle,
                    const uint8_t* base) {
+    if (slot == 0) ben10::lookup_guard::OpenWindow(base);
     if (weapon_lines.fetch_add(1) < 400)
         REXLOG_INFO("Weapon trace: person={:08X} slot={} weapon={:08X} handle={:08X} flags={:02X}",
                     person, slot, weapon, handle, handle ? Byte(base, handle + 6) : 0);
@@ -73,6 +76,9 @@ inline void ScriptError(uint32_t format, const uint8_t* base) {
 
 // sub_821E2680(node, event, recurse): events delivered to weapon instances.
 inline void Event(uint32_t node, uint32_t event, uint32_t recurse, uint32_t caller) {
+    // All ordinary node events previously took the diagnostic mutex. Only
+    // the suction release depends on the instance lookup during gameplay.
+    if (!ben10::lookup_guard::trace_enabled && event != 0x8d0a69dfu) return;
     if (!any_instance.load(std::memory_order_relaxed)) return;
     static std::unordered_set<uint64_t> seen;
     // Attack events from the Four Arms / Chromastone attack tables.
@@ -86,6 +92,8 @@ inline void Event(uint32_t node, uint32_t event, uint32_t recurse, uint32_t call
         auto found = instances.find(node);
         if (found == instances.end() && !attack_events.count(event)) return;
         if (found != instances.end()) slot = found->second;
+        if (slot == 4 && event == 0x8d0a69dfu) ben10::ucb_screen_flash::Release();
+        if (!ben10::lookup_guard::trace_enabled) return;
         if (seen.size() >= 600 ||
             !seen.insert((uint64_t(node) << 32) ^ (uint64_t(event) << 8) ^ caller).second) return;
     }
@@ -97,6 +105,7 @@ inline void Event(uint32_t node, uint32_t event, uint32_t recurse, uint32_t call
 // name; logs its words once so an imported sound can be compared with a
 // working one.
 inline void Descriptor(uint32_t descriptor, const uint8_t* base) {
+    if (!ben10::lookup_guard::trace_enabled) return;
     static std::mutex lock;
     static std::unordered_set<uint32_t> seen;
     if (!descriptor || descriptor >= 0xe0000000u || !Readable(base + descriptor, 64)) return;

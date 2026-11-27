@@ -47,11 +47,15 @@ namespace CosmicRecompi {
             return positions;
         }
         static byte[] InsertRow(byte[] code,string label,string callback,int expectedCount) {
+            return InsertRowAfter(code,label,callback,expectedCount,expectedCount-1);
+        }
+        // Clones the row of the afterIndex-th Menu_AddOption call (0-based) right behind itself with a new label and callback.
+        static byte[] InsertRowAfter(byte[] code,string label,string callback,int expectedCount,int afterIndex) {
             List<int> positions=Tokens(code),calls=new List<int>();
             foreach(int p in positions)
                 if((Read(code,p)&255)==7 && Read(code,p+4)==Crc("Menu_AddOption"))calls.Add(p);
-            if(calls.Count!=expectedCount)throw new InvalidDataException("Unexpected original menu structure.");
-            int begin=calls[calls.Count-1]-32,end=begin+48;
+            if(calls.Count!=expectedCount || afterIndex<0 || afterIndex>=calls.Count)throw new InvalidDataException("Unexpected original menu structure.");
+            int begin=calls[afterIndex]-32,end=begin+48;
             byte[] row=new byte[48];Buffer.BlockCopy(code,begin,row,0,48);
             Write(row,12,Crc(label));Write(row,24,Crc(callback));
             byte[] moved=(byte[])code.Clone();
@@ -81,9 +85,9 @@ namespace CosmicRecompi {
             using(MemoryStream output=new MemoryStream()) {
                 Append(output,0x1badbabe);Append(output,
 #if COSMIC_NATIVE_SETTINGS
-                    109
+                    (uint)(109+(AllAliensPatch.PhotoPauseRow?1:0))
 #else
-                    107
+                    (uint)(107+(AllAliensPatch.PhotoPauseRow?1:0))
 #endif
                     );int cursor=8,patched=0;byte[] quit=null;uint quitArguments=0;
                 for(int i=0;i<103;i++) {
@@ -91,7 +95,7 @@ namespace CosmicRecompi {
                     int size=checked((int)Read(original,cursor+8)*4);
                     byte[] code=new byte[size];Buffer.BlockCopy(original,cursor+12,code,0,size);
                     if(identity==Crc("QuitGame")){quit=(byte[])code.Clone();quitArguments=arguments;}
-                    if(identity==Crc("pausemenu_enter")){int anchors=0;foreach(int p in Tokens(code))if((Read(code,p)&255)==3 && Read(code,p+4)==0x3f066666){Write(code,p+4,0x3f166666);anchors++;}if(anchors!=1)throw new InvalidDataException("Unexpected pause list anchor.");code=InsertRow(code,"cosmic_quit_to_launcher_label","CosmicQuitToLauncher",5);patched++;}
+                    if(identity==Crc("pausemenu_enter")){int anchors=0;foreach(int p in Tokens(code))if((Read(code,p)&255)==3 && Read(code,p+4)==0x3f066666){Write(code,p+4,0x3f166666);anchors++;}if(anchors!=1)throw new InvalidDataException("Unexpected pause list anchor.");if(AllAliensPatch.PhotoPauseRow)code=InsertRowAfter(code,"cosmic_photo_mode_label","CosmicPhotoMode",5,1);code=InsertRow(code,"cosmic_quit_to_launcher_label","CosmicQuitToLauncher",AllAliensPatch.PhotoPauseRow?6:5);patched++;}
                     if(identity==0xb4db5294){code=InsertRow(code,"cosmic_video_label","CosmicVideoOptions",3);patched++;}
                     Append(output,identity);Append(output,arguments);Append(output,(uint)(code.Length/4));output.Write(code,0,code.Length);
                     cursor=checked(cursor+12+size);
@@ -120,6 +124,12 @@ namespace CosmicRecompi {
                 Append(output,Crc("CosmicQuitToLauncher"));Append(output,quitArguments);Append(output,(uint)(quit.Length/4));output.Write(quit,0,quit.Length);
                 Wrapper(output,"CosmicExitToLauncher","cosmic_quit_to_launcher");
                 Wrapper(output,"CosmicVideoOptions","cosmic_video_options");
+                // Photo Mode row: the stock Resume callback (7c9a9aee closes the pause menu and resumes the game), then ask the bridge to start Photo Mode.
+                if(AllAliensPatch.PhotoPauseRow)using(var photo=new MemoryStream()) {
+                    foreach(uint word in new uint[]{0x00000207,0x7c9a9aee,0x01000220,1,
+                        0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),0x00000217,Crc("cosmic_photo_mode"),0x01050020,1,0x21})Append(photo,word);
+                    Function(output,"CosmicPhotoMode",1,photo.ToArray());
+                }
                 uint[] restore={0x00000507,Crc("overlay"),0x00000207,Crc("overlay"),0x00000217,Crc("popfunction"),0x01050020,1,0x00000207,0x8610f32e,0x00000502,0x00050219,0x84fe6ee3,0x00000503,0,0x00050219,0xa393d2fb,0x00010502,0x00000207,Crc("MenuStack_ShowCurrentMenu"),0x01050220,1,0x21};
                 Append(output,Crc("CosmicRestoreOptions"));Append(output,1);Append(output,(uint)restore.Length);foreach(uint word in restore)Append(output,word);
                 return output.ToArray();
@@ -691,6 +701,17 @@ namespace CosmicRecompi {
             Ensure(gameFolder,translation);
         }
         static bool IsAuthoredTranslation(byte[] original,byte[] current) {
+            // Tables written before the Photo Mode label existed stay valid, so installs upgrade in place.
+            bool saved=AllAliensPatch.PhotoPauseRow;
+            try {
+                foreach(bool photo in new[]{true,false}) {
+                    AllAliensPatch.PhotoPauseRow=photo;
+                    if(IsAuthoredTranslationCore(original,current))return true;
+                }
+                return false;
+            } finally { AllAliensPatch.PhotoPauseRow=saved; }
+        }
+        static bool IsAuthoredTranslationCore(byte[] original,byte[] current) {
             try {
                 byte[] previous=NativeEnglish(original,false);
                 byte[] preview=NativeEnglish(original,true,true);
@@ -702,8 +723,8 @@ namespace CosmicRecompi {
                 byte[] priorNamed=NativeEnglish(original,true,false,true,true,true,true,true,false);
                 byte[] priorCustom=NativeEnglish(original,true,false,true,true,true,true,false);
                 byte[] priorPreset=NativeEnglish(original,true,false,true,true,true,false);
-                foreach(byte[] authored in new byte[][]{English(original),NativeEnglish(original),AllAliensPatch.English(priorSharpening),priorSharpening,AllAliensPatch.English(priorText),priorText,AllAliensPatch.English(priorNamed),priorNamed,AllAliensPatch.English(priorCustom),priorCustom,AllAliensPatch.English(priorPreset),priorPreset,AllAliensPatch.English(priorGraphics),priorGraphics,AllAliensPatch.English(priorRate),priorRate,AllAliensPatch.English(priorIcons),priorIcons,
-                    AllAliensPatch.English(previous),previous,AllAliensPatch.English(preview),preview}) {
+                foreach(byte[] authored in new byte[][]{English(original),AllAliensPatch.English(NativeEnglish(original),true),NativeEnglish(original),AllAliensPatch.English(priorSharpening,true),priorSharpening,AllAliensPatch.English(priorText,true),priorText,AllAliensPatch.English(priorNamed,true),priorNamed,AllAliensPatch.English(priorCustom,true),priorCustom,AllAliensPatch.English(priorPreset,true),priorPreset,AllAliensPatch.English(priorGraphics,true),priorGraphics,AllAliensPatch.English(priorRate,true),priorRate,AllAliensPatch.English(priorIcons,true),priorIcons,
+                    AllAliensPatch.English(previous,true),previous,AllAliensPatch.English(preview,true),preview}) {
                     int suffix=authored.Length-original.Length;
                     if(current.Length<suffix+4 || !TextKeys(authored).SetEquals(TextKeys(current)))continue;
                     bool matches=true;
@@ -747,10 +768,19 @@ namespace CosmicRecompi {
             byte[] aligned=AllAliensPatch.AlignPauseHighlight(original);
             byte[] guarded=AllAliensPatch.GuardCheatBackdropCleanup(aligned);
             byte[] updated=AllAliensPatch.MenuMouseHooks(guarded);
+            // The same script with the previous pause row pitch (before the Photo Mode row); an install holding it is upgraded in place.
+            byte[] legacyAligned,legacyGuarded;
+            bool savedPhoto=AllAliensPatch.PhotoPauseRow;
+            AllAliensPatch.PhotoPauseRow=false;
+            try {
+                legacyAligned=AllAliensPatch.AlignPauseHighlight(original);
+                legacyGuarded=AllAliensPatch.GuardCheatBackdropCleanup(legacyAligned);
+            } finally { AllAliensPatch.PhotoPauseRow=savedPhoto; }
             string currentHash=Hash(current);
             if(currentHash==Hash(updated))return;
             if(currentHash!=originalHash && currentHash!=Hash(aligned) && currentHash!=Hash(guarded) &&
-                !AllAliensPatch.IsMenuMouseVariant(current,guarded))
+                currentHash!=Hash(legacyAligned) && currentHash!=Hash(legacyGuarded) &&
+                !AllAliensPatch.IsMenuMouseVariant(current,guarded) && !AllAliensPatch.IsMenuMouseVariant(current,legacyGuarded))
                 throw new IOException("Another version modified menu.ds.");
             if(!backedUp)File.WriteAllBytes(backup,original);
             string temporary=path+".cosmic-new";
@@ -773,6 +803,31 @@ namespace CosmicRecompi {
             string temporary=path+".cosmic-new";
             File.WriteAllBytes(temporary,updated);
             File.Replace(temporary,path,null);
+        }
+
+        // The script of the build before the Photo Mode pause row; an install holding it is upgraded in place.
+        static byte[] LegacyPhotoFrontend(byte[] original) {
+            bool saved=AllAliensPatch.PhotoPauseRow;
+            AllAliensPatch.PhotoPauseRow=false;
+            try {
+                byte[] stock=Frontend(original);
+                byte[] videoPreview=PreviewVideoPage(stock);
+#if COSMIC_HERO_TIME && COSMIC_NATIVE_SETTINGS
+                byte[] preview=AllAliensPatch.StyledOptionsHub(AllAliensPatch.StyledSoundPreview(AllAliensPatch.StyledGameplayPreview(original,AllAliensPatch.SettingsPreview(original,videoPreview))));
+#else
+                byte[] preview=videoPreview;
+#endif
+                byte[] alignedPreview=AllAliensPatch.AlignPauseMenu(preview),alignedStock=AllAliensPatch.AlignPauseMenu(stock);
+#if COSMIC_NATIVE_SETTINGS
+                alignedPreview=AllAliensPatch.SyncLauncherGameplay(alignedPreview);
+                alignedStock=AllAliensPatch.SyncLauncherGameplay(alignedStock);
+#endif
+#if COSMIC_HERO_TIME && COSMIC_NATIVE_SETTINGS
+                return AllAliensPatch.MenuCursorHooks(AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedPreview));
+#else
+                return AllAliensPatch.PreserveCheatBackdropOnRefresh(alignedStock);
+#endif
+            } finally { AllAliensPatch.PhotoPauseRow=saved; }
         }
 
         public static void Ensure(string gameFolder,byte[] translation=null) {
@@ -817,7 +872,7 @@ namespace CosmicRecompi {
             byte[] current=File.ReadAllBytes(frontend),currentEnglish=File.ReadAllBytes(english);
             string expected=Hash(updated),expectedEnglish=Hash(updatedEnglish),currentHash=Hash(current);
             if(currentHash==expected && Hash(currentEnglish)==expectedEnglish) { EnsurePauseHighlight(scripts);EnsureLevelSelectMouse(scripts);return; }
-            if((currentHash!=expected && currentHash!=Hash(cheatPreview) && currentHash!=Hash(cheatStock) &&
+            if((currentHash!=expected && currentHash!=Hash(LegacyPhotoFrontend(original)) && currentHash!=Hash(cheatPreview) && currentHash!=Hash(cheatStock) &&
                 currentHash!=Hash(AllAliensPatch.LegacyCinematicVoiceVolume(cheatPreview)) &&
                 currentHash!=Hash(AllAliensPatch.LegacyCinematicVoiceVolume(cheatStock)) && currentHash!=Hash(preview) && currentHash!=Hash(alignedPreview) && currentHash!=Hash(alignedStock) && currentHash!=Hash(previousAlignedPreview) && currentHash!=Hash(previousAlignedStock) && currentHash!=Hash(unsyncedPreview) && currentHash!=Hash(unsyncedStock) && currentHash!=Hash(videoPreview) && currentHash!=Hash(previousSettingsPreview) && currentHash!=Hash(gameplayPreview) && currentHash!=Hash(soundPreview) && currentHash!=Hash(previousSoundPreview) && currentHash!=Hash(previousStyledPreview) && currentHash!=Hash(crashedStyledPreview) && currentHash!=Hash(numericVibrationPreview) && currentHash!=Hash(oldVibrationPreview) && currentHash!=Hash(Frontend(original)) && currentHash!=FrontendHash &&
                 currentHash!=Hash(LegacyFrontend(original)) && currentHash!=Hash(NativeMenuFrontend(original)) &&

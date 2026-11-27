@@ -16,3 +16,6 @@ native-rex/generated/default/
 *.wmv
 *.pdb
 __pycache__/
+# The prepared extra aliens, pictures and voices that ship with the launcher (docs/BUNDLED_ASSETS.md)
+!bundled-assets/
+!bundled-assets/**

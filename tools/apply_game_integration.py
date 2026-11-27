@@ -50,8 +50,16 @@ else:raise RuntimeError('Frame submission function missing from generated input'
 
 from apply_callback_capacity import apply as expand_callbacks
 from apply_resource_diagnostics import apply as add_diagnostics
+from apply_photo_mode import apply as add_photo_mode
+from apply_ben_upgrade_arc import apply as add_ben_upgrade_arc
+from apply_vm_guard import apply as add_vm_guard
+from apply_effect_guard import apply as add_effect_guard
 changes+=expand_callbacks(args.generated)
 changes+=add_diagnostics(args.generated)
+changes+=add_photo_mode(args.generated)
+changes+=add_ben_upgrade_arc(args.generated)
+changes+=add_vm_guard(args.generated)
+changes+=add_effect_guard(args.generated)
 p=locate_functions(args.generated,['sub_824868B8'])['sub_824868B8'];text=p.read_text()
 start=text.index('DEFINE_REX_FUNC(sub_824868B8) {')
 end=text.find('\nDEFINE_REX_FUNC(',start+1)
@@ -453,18 +461,49 @@ if old_beam_guard in body:
     body = body.replace(old_beam_guard, '')
     p.write_text(text[:start] + body + text[end:])
     changes += 1
-if 'SwapWayBigBeamTint' not in body:
+if 'SelectWayBigBeamTint' not in body:
     anchor = 'ctx.lr = 0x821F38BC;\n\tsub_82439168(ctx, base);'
     if body.count(anchor) != 1:
         raise RuntimeError('Unexpected Way Big beam vertex color call')
-    hook = ('if (ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed) &&\n'
-            '\t    ben10::albedo_textures::SwapWayBigBeamTint(REX_LOAD_U32(ctx.r31.u32 + 268),\n'
-            '\t      {REX_LOAD_U32(ctx.r31.u32 + 136), REX_LOAD_U32(ctx.r31.u32 + 140),\n'
-            '\t       REX_LOAD_U32(ctx.r31.u32 + 144), REX_LOAD_U32(ctx.r31.u32 + 148)}))\n'
-            '\t    std::swap(ctx.f1.u64, ctx.f2.u64);\n\t')
+    old_start = body.find('if (ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed) &&')
+    if old_start >= 0 and 'SwapWayBigBeamTint' in body[old_start:body.index(anchor)]:
+        body = body[:old_start] + body[body.index(anchor):]
+    hook = (
+        'if (ben10::albedo_textures::final_battle_active.load(std::memory_order_relaxed)) {\n'
+        '\t  using ben10::albedo_textures::WayBigBeamTint;\n'
+        '\t  const auto tint = ben10::albedo_textures::SelectWayBigBeamTint(REX_LOAD_U32(ctx.r31.u32 + 268),\n'
+        '\t    {REX_LOAD_U32(ctx.r31.u32 + 136), REX_LOAD_U32(ctx.r31.u32 + 140),\n'
+        '\t     REX_LOAD_U32(ctx.r31.u32 + 144), REX_LOAD_U32(ctx.r31.u32 + 148)});\n'
+        '\t  if (tint == WayBigBeamTint::SwapRedGreen) std::swap(ctx.f1.u64, ctx.f2.u64);\n'
+        '\t  if (tint == WayBigBeamTint::Cyan) {\n'
+        '\t    ctx.f3.f64 = ctx.f2.f64;\n'
+        '\t    ctx.f1.f64 *= 0.12;\n'
+        '\t  }\n\t}\n\t'
+    )
     header = '#include "../../src/albedo_textures.h"\n'
     p.write_text((header if header not in text else '') + text[:start] +
                  body.replace(anchor, hook + anchor) + text[end:])
+    changes += 1
+
+# Scale positive outgoing damage at the shared combat dispatch. This call has
+# the original hit source at caller-stack +84 (current frame +532).
+name = 'sub_82140398'
+p = locate_functions(args.generated, [name])[name]
+text = p.read_text()
+start = text.index(f'DEFINE_REX_FUNC({name}) {{')
+end = text.find('\nDEFINE_REX_FUNC(', start + 1)
+if end < 0:
+    end = len(text)
+body = text[start:end]
+if 'ultimate_way_big::Damage' not in body:
+    anchor = 'ctx.lr = 0x82140D50;\n\tsub_8213D2E8(ctx, base);'
+    if body.count(anchor) != 1:
+        raise RuntimeError('Unexpected Way Big outgoing damage dispatch')
+    call = ('ctx.f1.f64 = ben10::ultimate_way_big::Damage(\n'
+            '\t    REX_LOAD_U32(ctx.r1.u32 + 532), ctx.r29.u32, ctx.f1.f64);\n\t')
+    include = '#include "../../src/ultimate_way_big.h"\n'
+    p.write_text((include if include not in text else '') + text[:start] +
+                 body.replace(anchor, call + anchor) + text[end:])
     changes += 1
 
 # Input poll: direct mouse look. sub_821A8E70 turns a raw stick into angle,
@@ -604,7 +643,11 @@ weapon_trace_hooks = {
     # Events sent to a node, its components and (recurse) its children.
     'sub_821E2680': [
         ('REX_FUNC_PROLOGUE();', 'REX_FUNC_PROLOGUE();\n'
-         '\tben10::weapon_trace::Event(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, uint32_t(ctx.lr));')],
+         '\tif (ben10::ucb_effect_owner::Reject(base, ctx.r3.u32, ctx.r4.u32, uint32_t(ctx.lr), ctx.r29.u32)) return;\n'
+         '\tben10::weapon_trace::Event(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, uint32_t(ctx.lr));'),
+        ('loc_821E26FC:\n', 'loc_821E26FC:\n'
+         '\t// UCB private signals are component-local, not level script messages.\n'
+         '\tif (ben10::ucb_effect_owner::Local(base, ctx.r31.u32, ctx.r29.u32)) goto loc_821E275C;\n')],
 }
 for name, p in locate_functions(args.generated, weapon_trace_hooks).items():
     text = p.read_text()
@@ -620,7 +663,10 @@ for name, p in locate_functions(args.generated, weapon_trace_hooks).items():
             raise RuntimeError(f'Unexpected weapon trace site in {name}')
         body = body.replace(anchor, hooked)
     header = '#include "../../src/weapon_trace.h"\n'
-    p.write_text((header if header not in text else '') + text[:start] + body + text[end:])
+    owner_header = '#include "../../src/ucb_effect_owner.h"\n'
+    p.write_text((header if header not in text else '') +
+                 (owner_header if name == 'sub_821E2680' and owner_header not in text else '') +
+                 text[:start] + body + text[end:])
     changes += 1
 
 # The data-file record manager (sub_821AE518) keeps each .ddf record's 20-byte

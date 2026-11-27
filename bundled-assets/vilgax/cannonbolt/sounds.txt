@@ -1,0 +1,13 @@
+<sound name="cbolt_ball_dash" id="0" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_superball" id="2" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_powerflop" id="15" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_burnout" id="19" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_hurt" id="5" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_jump" id="6" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_land_big" id="8" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_land_small" id="9" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_light1" id="10" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_light2" id="11" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_light3" id="12" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_heavy1" id="12" swpgroupid="0" prjid="cboltva"/>
+<sound name="cbolt_heavy2" id="11" swpgroupid="0" prjid="cboltva"/>

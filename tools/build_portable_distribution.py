@@ -1,6 +1,6 @@
-"""Wrap an explicitly staged, asset-free release as one portable Windows EXE.
+"""Wrap an explicitly staged release as one portable Windows EXE.
 
-Does not install, publish, collect an ISO, or copy the working game's user data.
+Does not install, publish, collect an ISO, or copy the working game's user data. The only game-derived files allowed are\nthe prepared extra aliens, pictures and voices in bundled-assets/, each listed in its MANIFEST.json with an exact SHA-256.
 The staging directory must already contain a verified matching runtime manifest.
 """
 import argparse
@@ -45,10 +45,13 @@ importer={'python.exe','python3.dll','python310.dll','python310.zip','python310.
           'extract_discord_level_images.py','extract_four_arms_skin_weights.py','merge_alien_streams.py',
           'prepare_all_aliens_candidate.py','prepare_pause_menu_extension.py',
           'stage_four_arms_archive.py','stage_four_arms_registration.py','prepare_albedo_textures.py',
-          'import_alien_force.py','prepare_vilgax_import.py','wheel_icon_texture.py','add_ring_pictures_to_gtex.py',
+          'import_alien_force.py','import_bundled_assets.py','add_cannonbolt_icon.py','bundle_delta.py','ben_model_patch.py','prepare_ultimate_way_big.py','prepare_ultimate_way_big_form.py','prepare_ultimate_cannonbolt.py','prepare_vilgax_import.py','wheel_icon_texture.py','add_ring_pictures_to_gtex.py',
           'way_big_portrait.rgb'}
 if (stage/'four-arms-importer/prepare_albedo_textures.py').is_file():
     assert (stage/'four-arms-importer/way_big_portrait.rgb').stat().st_size == 256 * 256 * 3
+bundled={}
+if (stage/'bundled-assets/MANIFEST.json').is_file():
+    bundled={e['path']:e['sha256'] for e in json.loads((stage/'bundled-assets/MANIFEST.json').read_text(encoding='utf-8'))['files']}
 files=[]
 for p in sorted(stage.rglob('*')):
     if p.is_dir():continue
@@ -64,8 +67,12 @@ for p in sorted(stage.rglob('*')):
         assert p.suffix.lower()=='.png',relative
     elif relative.parts[0]=='four-arms-importer':
         assert len(relative.parts)==2 and p.name in importer|crt,relative
+    elif relative.parts[0]=='bundled-assets':
+        # The prepared extra aliens, pictures and voices (docs/BUNDLED_ASSETS.md): only files listed in the manifest with their exact hash.
+        assert relative.as_posix()=='bundled-assets/MANIFEST.json' or relative.relative_to('bundled-assets').as_posix() in bundled,relative
+        assert hashlib.sha256(p.read_bytes()).hexdigest()==bundled.get(relative.relative_to('bundled-assets').as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()),relative
     else:raise AssertionError('Unexpected package directory: '+str(relative))
-    assert p.suffix.lower() not in ('.iso','.xex','.pk4','.ds','.pdb','.xbx','.dat')
+    assert relative.parts[0]=='bundled-assets' or p.suffix.lower() not in ('.iso','.xex','.pk4','.ds','.pdb','.xbx','.dat')
     data=p.read_bytes()
     for needle in filter(None,(os.environ.get('USERPROFILE'),Path('.codex','attachments').as_posix())):
         assert needle.lower().encode() not in data.lower(),relative

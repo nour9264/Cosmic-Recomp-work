@@ -11,8 +11,12 @@ namespace CosmicRecompi {
     byte[] original=File.ReadAllBytes(File.Exists(backup)?backup:path);
     if(Hash(original)!=pair.Value)throw new IOException("Unsupported original mission script: "+pair.Key);
     byte[] target=AllAliensPatch.PresenceMission(original,pair.Key);string current=Hash(File.ReadAllBytes(path));
+    string previous=Hash(target);
+#if COSMIC_VILGAX_ALIENS
+    if(pair.Key=="l_tokd")previous=Hash(AllAliensPatch.WayBigMission(target));
+#endif
     if(current==Hash(target))continue;
-    if(current!=pair.Value)throw new IOException("Unknown mission-script edit: "+pair.Key);
+    if(current!=pair.Value && current!=previous)throw new IOException("Unknown mission-script edit: "+pair.Key);
     originals.Add(path,original);updated.Add(path,target);
    }
    foreach(var pair in updated){string backup=pair.Key+".cosmic-discord-original",temp=pair.Key+".cosmic-discord-new";

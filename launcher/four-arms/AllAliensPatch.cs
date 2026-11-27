@@ -87,6 +87,14 @@ namespace CosmicRecompi {
                 (uint)(42<<16|indexRegister<<8|6),0x012a2920,(uint)resultRegister);
             return check;
         }
+        // The form ring and its hover lookup list only the forms that are not on a hotkey (table 4c9c726b, position to form
+        // ID); the purchased tier must be checked against that form ID, not against the position in the list.
+        static Injection RosterUnlockOfListed(int positionRegister,int resultRegister) {
+            var check=new Injection();
+            check.Add(0x00002b07,0x4c9c726b,(uint)(0x2a<<24|positionRegister<<16|0x2b<<8|0x18),
+                0x00002907,Crc("CosmicRosterUnlocked"),0x012a2920,(uint)resultRegister);
+            return check;
+        }
         static void IfFourArms(Injection code,int formRegister,params uint[] body) {
             code.Add(0x00002a03,0x41980000,(uint)(43<<24|42<<16|formRegister<<8|0x10));
             code.Branch(43,code.Words.Count+1+body.Length,true);
@@ -297,6 +305,14 @@ namespace CosmicRecompi {
             var open=new Injection();
             for(int i=0;i<names.Length;i++)PreviewCapture(open,source.Code,getters[i],ends[i],names[i],legacy==0?preferences[i]:0,legacy==4 && i==2);
             foreach(var fix in open.Fixups)open.Words[fix.Position]|=(uint)fix.Target<<fix.Shift;
+#if COSMIC_BEN_UPGRADES
+            if(legacy==0) {
+                open.Add(0x00001b07,Crc("CosmicMasterControlSync"));
+                int skip=open.Words.Count;
+                open.Add(0x00001b1f,0x00281b20,3);
+                open.Words[skip]|=(uint)open.Words.Count<<16;
+            }
+#endif
             PreviewNative(open,"cosmic_gameplay_open",0);
             // Legacy preview restored Options before pushing the update callback.
             if(previous)for(int i=8;i<video.Code.Length/4-1;i++)open.Add(Read(video.Code,i*4));
@@ -459,7 +475,8 @@ namespace CosmicRecompi {
 
         // A distinct anchor identifies the compact Pause Menu in the shared menu script.
         const uint CompactPauseAnchor=0x3f0c0000; // .546875
-        const uint CompactPausePitch=0x3d872b02; // .066
+        // .066 per row before the Photo Mode row; .060 with it, so seven rows end above the points readout.
+        static uint CompactPausePitch{get{return PhotoPauseRow?0x3d75c28fu:0x3d872b02u;}}
 
         // CheatEntered rebuilds the title menu after updating unlocks. Keep the
         // shared animated backdrop alive across its second stack pop.
@@ -710,7 +727,7 @@ namespace CosmicRecompi {
 
         internal static byte[] AlignPauseMenu(byte[] frontend,bool previous=false) {
             const uint menuAnchorField=0xb87458ce, optionCountField=0x90274abc;
-            const uint negativePitchAdjustment=0xbc1374bc; // -.009
+            uint negativePitchAdjustment=PhotoPauseRow?0xbc75c28fu:0xbc1374bc; // -.015 (pitch .060) or -.009 (pitch .066)
             var rows=Parse(frontend);
             var pause=rows.Find(r=>r.Id==Crc("pausemenu_enter"));
             if(pause==null)throw new InvalidDataException("Pause menu missing.");
@@ -738,7 +755,7 @@ namespace CosmicRecompi {
                 hooks.Add(word+4,after);
                 calls++;
             }
-            if(anchors!=1 || (!previous && calls!=6))throw new InvalidDataException("Unexpected pause menu layout.");
+            if(anchors!=1 || (!previous && calls!=(PhotoPauseRow?7:6)))throw new InvalidDataException("Unexpected pause menu layout.");
             if(!previous)pause.Code=Relocate(pause.Code,hooks);
             return Pack(rows);
         }
@@ -790,10 +807,22 @@ namespace CosmicRecompi {
             return Pack(rows);
         }
 
-        public static byte[] English(byte[] original) {
+        // The pause menu's Photo Mode row (script row, text label, native callback). Cleared only to rebuild the previous script/text.
+        internal static bool PhotoPauseRow=true;
+        public static byte[] English(byte[] original,bool legacyLabel=false) {
             using(var s=new MemoryStream()) {
-                s.Write(original,0,original.Length);byte[] label=Encoding.ASCII.GetBytes("ALL ALIENS\0");
-                Word(s,Crc("cosmic_all_aliens_label"));Word(s,(uint)label.Length);s.Write(label,0,label.Length);return s.ToArray();
+                s.Write(original,0,original.Length);
+#if COSMIC_BEN_UPGRADES
+                byte[] label=Encoding.ASCII.GetBytes(legacyLabel?"ALL ALIENS\0":"MASTER CONTROL\0");
+#else
+                byte[] label=Encoding.ASCII.GetBytes("ALL ALIENS\0");
+#endif
+                Word(s,Crc("cosmic_all_aliens_label"));Word(s,(uint)label.Length);s.Write(label,0,label.Length);
+                if(PhotoPauseRow) {
+                    byte[] photo=Encoding.ASCII.GetBytes("PHOTO MODE\0");
+                    Word(s,Crc("cosmic_photo_mode_label"));Word(s,(uint)photo.Length);s.Write(photo,0,photo.Length);
+                }
+                return s.ToArray();
             }
         }
 #if COSMIC_ULTIMATE_VOICES
@@ -812,6 +841,28 @@ namespace CosmicRecompi {
         }
 #endif
 #if COSMIC_DISCORD_PRESENCE
+#if COSMIC_VILGAX_ALIENS
+        internal static byte[] WayBigMission(byte[] mission) {
+            var rows=Parse(mission,true);
+            int found=0;
+            foreach(var row in rows)if(row.Id==0xbfeb2227) {
+                // The boss entry clears inputmgr callback 1. Substitute our
+                // three-argument callback and keep the stock exit restoration.
+                if(row.Args!=0 || row.Code.Length!=78*4 ||
+                   Read(row.Code,55*4)!=0x7bfab3f7 ||
+                   Read(row.Code,57*4)!=0x3f800000 ||
+                   Read(row.Code,58*4)!=0x00000b01 ||
+                   Read(row.Code,62*4)!=0xf76d228d)
+                    throw new InvalidDataException("Unexpected Way Big input callback site.");
+                var callback=new Injection();
+                callback.Add(0x00000b07,Crc("CosmicWayBigUpdate"));
+                row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{59,callback}});
+                found++;
+            }
+            if(found!=1)throw new InvalidDataException("Way Big input callback site missing.");
+            return Pack(rows);
+        }
+#endif
         internal static byte[] PresenceMission(byte[] original,string level) {
             // The hash-pinned l_rush script contains an unrelated duplicate ID.
             // Preserve all records in order; still require our entry exactly once.
@@ -919,16 +970,60 @@ namespace CosmicRecompi {
                 File.Replace(temporary,path,null);
             }
         }
+        internal sealed class ImportedForm {
+            public string Folder,Name;
+            public int Id;
+            // Forms 20 to 23 are roster aliens; Ultimate forms (24 and up) are reached by transforming.
+            public bool OnWheel {get{return Id>=20 && Id<=23;}}
+        }
 #if !COSMIC_VILGAX_ALIENS
         // The Vilgax Attacks aliens bridge (launcher/vilgax) supplies these.
-        internal sealed class ImportedForm {public string Folder,Name;public int Id;}
         static int ImportedLimit=int.MaxValue;
         internal static List<ImportedForm> ImportedForms(string installation){return new List<ImportedForm>();}
         internal static void EnsureImportedRecords(string game){}
         static bool EarlierImport(byte[] current,byte[] updated,List<ImportedForm> forms){return false;}
 #endif
+#if COSMIC_BEN_UPGRADES
+        static List<Record> ReadBenProgram(string name) {
+            using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream(name)) {
+                if(stream==null)throw new InvalidDataException("Missing Ben upgrade program.");
+                using(var memory=new MemoryStream()){stream.CopyTo(memory);return Parse(memory.ToArray());}
+            }
+        }
+        static byte[] UpgradeBenGlobals(byte[] original) {
+            var rows=Parse(original);
+            foreach(var replacement in ReadBenProgram("CosmicBenUpgradeGlobals.bin")) {
+                var row=rows.Find(r=>r.Id==replacement.Id);
+                if(row==null)rows.Add(replacement);
+                else {
+                    if(row.Args!=replacement.Args)throw new InvalidDataException("Unexpected Ben upgrade gameplay entry.");
+                    row.Code=replacement.Code;
+                }
+            }
+            return Pack(rows);
+        }
+        static byte[] UpgradeBenScreen(byte[] patched) {
+            var rows=Parse(patched);
+            var wrapper=ReadBenProgram("CosmicBenUpgradeMenu.bin");
+            var stock=rows.Find(r=>r.Id==0x53573a0e);
+            uint renamed=Crc("CosmicOriginalUpgradeSelectTick");
+            if(stock==null || stock.Args!=2 || rows.Exists(r=>r.Id==renamed) ||
+               wrapper.Count!=1 || wrapper[0].Id!=stock.Id || wrapper[0].Args!=stock.Args)
+                throw new InvalidDataException("Unexpected Upgrade Forms input handler.");
+            stock.Id=renamed;
+            rows.Add(wrapper[0]);
+            return Pack(rows);
+        }
+#endif
         public static byte[] Transform(string file,byte[] original,string fourArmsBundle) {
+            return TransformForms(file,original,fourArmsBundle,true);
+        }
+        static byte[] TransformForms(string file,byte[] original,string fourArmsBundle,bool benUpgrades) {
+#if COSMIC_BEN_UPGRADES
+            if(benUpgrades && file=="globals.ds")original=UpgradeBenGlobals(original);
+#endif
             var imported=ImportedForms(Path.GetDirectoryName(fourArmsBundle));
+            var wheelImports=imported.FindAll(form=>form.OnWheel);
 #if COSMIC_HERO_TIME
             // Private candidate only. Compose at original VM boundaries before
             // the independently verified All Aliens relocation.
@@ -987,9 +1082,19 @@ namespace CosmicRecompi {
                         // The stock normal-form limit excludes the probe ID.
                         // OR in only Four Arms and retain subsequent wheel gates.
                         fourArmsWheel.Add(0x00000403,0x41980000,0x05041b10,0x06050615);
-                        foreach(var form in imported)fourArmsWheel.Add(0x00000403,FloatWord(form.Id),0x05041b10,0x06050615);
+                        foreach(var form in wheelImports)fourArmsWheel.Add(0x00000403,FloatWord(form.Id),0x05041b10,0x06050615);
+                        var update=Hook("CosmicAlienUpdate");
+#if COSMIC_BEN_UPGRADES
+                        if(benUpgrades) {
+                            var guarded=Hook("CosmicNormalTransformUpdate");
+                            guarded.Branch(3,6,true);
+                            guarded.Add(0x21);
+                            guarded.Add(update.Words.ToArray());
+                            update=guarded;
+                        }
+#endif
                         r.Code=Relocate(r.Code,new Dictionary<int,Injection>{
-                            {34,Hook("CosmicAlienUpdate")},{gate,fourArmsWheel}});
+                            {34,update},{gate,fourArmsWheel}});
                         patched++;
                     }
                     if(r.Id==Crc("destroy_form_switching")){r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{0,Hook("CosmicAlienUnload")}});patched++;}
@@ -1041,8 +1146,22 @@ namespace CosmicRecompi {
                     }
                     foreach(var form in imported)rows.AddRange(Parse(File.ReadAllBytes(Path.Combine(form.Folder,"forms.bin"))));
                 }
+#if COSMIC_BEN_UPGRADES
+                if(benUpgrades)foreach(var row in rows)if(row.Id==Crc("CosmicUltimateWayBigTick")) {
+                    if(row.Code.Length!=620 || Read(row.Code,99*4)!=0x00001d07 || Read(row.Code,154*4)!=0x21)
+                        throw new InvalidDataException("Unexpected Way Big transformation entry.");
+                    var gate=new Injection();
+                    gate.Add(0x00280206,0x00001e07,Crc("CosmicWayBigTapGate"),0x01281e20,10);
+                    gate.Branch(10,154);
+                    row.Code=Relocate(row.Code,new Dictionary<int,Injection>{{15,Hook("CosmicUltimateTapCancel")},{99,gate}});
+                }
+#endif
                 foreach(var r in rows)if(r.Id==0x66960347) {
                     if(r.Code.Length!=230*4)throw new InvalidDataException("Unexpected form input handler.");
+#if COSMIC_BEN_UPGRADES
+                    if(benUpgrades)foreach(int at in new[]{68,111,154,197})
+                        ReplaceWord(r.Code,at,0x577e126c,Crc("CosmicNormalTransformRequest"));
+#endif
                     var hooks=new Dictionary<int,Injection>();
                     foreach(int p in new int[]{55,98,141,184}){
                         var i=new Injection();i.Branch(4,207);
@@ -1078,7 +1197,7 @@ namespace CosmicRecompi {
                     if(r.Id==0xf5fbffb9U) {
                         // Twelve roster ordinals (eleven stock aliens and Four Arms), then one per
                         // alien imported from Vilgax Attacks, in form ID order.
-                        uint total=CosmicFloat(12+imported.Count);
+                        uint total=CosmicFloat(12+wheelImports.Count);
                         ReplaceWord(r.Code,36,0x00111017,0x00001103);
                         ReplaceWord(r.Code,37,0x39a39c8c,total);
                         ReplaceWord(r.Code,105,0x00111017,0x00001103);
@@ -1087,7 +1206,7 @@ namespace CosmicRecompi {
                         var id=new Injection();
                         id.Add(0x00290506);
                         var ordinalForms=new List<KeyValuePair<int,int>>{new KeyValuePair<int,int>(12,19)};
-                        var importedSorted=new List<ImportedForm>(imported);
+                        var importedSorted=new List<ImportedForm>(wheelImports);
                         importedSorted.Sort((a,b)=>a.Id.CompareTo(b.Id));
                         for(int k=0;k<importedSorted.Count;k++)ordinalForms.Add(new KeyValuePair<int,int>(13+k,importedSorted[k].Id));
                         foreach(var pair in ordinalForms) {
@@ -1102,7 +1221,7 @@ namespace CosmicRecompi {
                         ReplaceWord(r.Code,70,0x1b000510,0x1b002910);
                         ReplaceWord(r.Code,73,0x10000510,0x10002910);
                         ReplaceWord(r.Code,79,0x05041d1a,0x29041d1a);
-                        r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{43,id},{253,RosterUnlockCheck(12,19)}});
+                        r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{43,id},{253,RosterUnlockOfListed(12,19)}});
                     } else if(r.Id==0xaacc3adeU) {
                         // Keep the wheel geometry indexed by its ordinal.
                         // The icon, callback and upgrade tables use the real ID.
@@ -1116,6 +1235,12 @@ namespace CosmicRecompi {
                         form.Add(0x00000403,0x41980000,0x00040319,0x0b8e8b12);
                         var unlocked=new Injection();
                         IfFourArms(unlocked,4,ReadFourArmsUnlock(10));
+                        // Rath, Four Arms and the Alien Force aliens also need their purchased tier (stock slots always pass).
+                        unlocked.Add(RosterUnlockCheck(4,41).Words.ToArray());
+                        int bought=unlocked.Words.Count;
+                        unlocked.Branch(41,bought+2,true);
+                        unlocked.Jump(bought+3,true);
+                        unlocked.Add(0x00000a02);
                         var ordinal=new Injection();
                         ordinal.Add(0x00290406);
                         IfFourArms(ordinal,4,0x00000403,0x41400000);
@@ -1168,17 +1293,21 @@ namespace CosmicRecompi {
                         r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{335,form}});
                     } else if(r.Id==0x80def930U) {
                         ReplaceWord(r.Code,4,0x000a0917,0x00000a03);
-                        ReplaceWord(r.Code,5,0x39a39c8c,CosmicFloat(12+imported.Count));
-                        var allowed=RosterUnlockCheck(7,13);
+                        ReplaceWord(r.Code,5,0x39a39c8c,CosmicFloat(12+wheelImports.Count));
+                        // After table[position] has been read into register 10 (form ID).
+                        var allowed=RosterUnlockCheck(10,13);
                         allowed.Branch(13,162);
-                        r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{101,allowed}});
+                        r.Code=Relocate(r.Code,new Dictionary<int,Injection>{{104,allowed}});
                     }
                 }
-                // The R3 ring shows every alien as unlocked (Four Arms and Rath no longer need a cheat or
-                // progress; the stock check read the profile for form 19 and 11).
-                rows.Add(new Record{Id=Crc("CosmicRosterUnlocked"),Args=1,Code=Bytes(new uint[]{
-                    0x00010802,0x00000822,0x21
-                })});
+                // The progression profile shares the same saved-tier gate as the
+                // gameplay wheel. Other bridge profiles retain their roster rules.
+                byte[] rosterUnlock=Bytes(new uint[]{0x00010802,0x00000822,0x21});
+#if COSMIC_BEN_UPGRADES
+                if(benUpgrades)rosterUnlock=Bytes(new uint[]{
+                    0x00280006,0x00001e07,Crc("CosmicRosterAllows"),0x01281e20,8,0x822,0x21});
+#endif
+                rows.Add(new Record{Id=Crc("CosmicRosterUnlocked"),Args=1,Code=rosterUnlock});
                 foreach(var r in rows)if(r.Id==0x8f436ad3) {
                     if(r.Code.Length!=769*4)throw new InvalidDataException("Unexpected form HUD.");
                     if(Read(r.Code,49*4)!=0x00181f06 || Read(r.Code,635*4)!=0x00181f06)
@@ -1225,13 +1354,33 @@ namespace CosmicRecompi {
                 if(Hash(original)!=hashes[i])throw new InvalidDataException("Unsupported original form script: "+names[i]);
                 byte[] updated=Transform(names[i],original,Path.Combine(Path.GetDirectoryName(game),"four-arms")),current=File.ReadAllBytes(path);
                 byte[] previous=updated;
-                if(names[i]=="circdisp.ds")updated=CircularWheelMouseHooks(updated);
+                if(names[i]=="circdisp.ds") {
+                    updated=CircularWheelMouseHooks(updated);
+#if COSMIC_BEN_UPGRADES
+                    previous=updated;
+                    updated=UpgradeBenScreen(updated);
+#endif
+                }
 #if COSMIC_NATIVE_SETTINGS
                 if(names[i]=="globals.ds")updated=SyncLauncherGameplay(updated,true);
 #endif
                 if(Hash(current)==Hash(updated))continue;
                 // Installs from before an imported form was added.
                 bool earlier=false;
+#if COSMIC_BEN_UPGRADES
+                if(names[i]=="globals.ds") {
+                    byte[] prior=TransformForms(names[i],original,Path.Combine(Path.GetDirectoryName(game),"four-arms"),false);
+#if COSMIC_NATIVE_SETTINGS
+                    prior=SyncLauncherGameplay(prior,true);
+#endif
+                    earlier=Hash(current)==Hash(prior) || EarlierHeroTime(current,prior);
+                }
+                if(names[i]=="circdisp.ds") {
+                    byte[] prior=TransformForms(names[i],original,Path.Combine(Path.GetDirectoryName(game),"four-arms"),false);
+                    prior=CircularWheelMouseHooks(prior);
+                    earlier=Hash(current)==Hash(prior);
+                }
+#endif
                 int importedCount=ImportedForms(Path.GetDirectoryName(game)).Count;
                 try {
                   for(int limit=0;limit<importedCount && !earlier;limit++) {
@@ -1413,9 +1562,20 @@ namespace CosmicRecompi {
             // Aliens imported from Vilgax Attacks stream their clips the same way.
             var fourArmsLevelArchives=new List<byte[]>(levelArchives);
             var importedClips=new HashSet<uint>();
+#if COSMIC_BEN_UPGRADES
+            importedClips.Add(0x7eefec3a); // Optional imported Ben transformation.
+            // Approved normal-form chest taps, including the Final Battle resident.
+            foreach(uint clip in new uint[]{0x634dc7b3,0x5da9d5a1,0x315b94f9,0x7e1a023e,0xca7b0c29,0x100603e9,0xd710a7bc})importedClips.Add(clip);
+            // Interact clips of the five stock Ultimates (tools/interact/install_interact_clips.py): in, loop and out of each.
+            foreach(uint clip in new uint[]{0x993b3802,0xc78840a3,0xbea7d72e,0x846cfd8f,0xdadf852e,0xa3f012a3,0xa7df2a10,0xf96c52b1,0x8043c53c,
+                                            0xcb2d6b48,0x959e13e9,0xecb18464,0x300df398,0x6ebe8b39,0x17911cb4})importedClips.Add(clip);
+#endif
             foreach(var form in AllAliensPatch.ImportedForms(Path.GetDirectoryName(game)))
                 foreach(string package in Directory.GetFiles(form.Folder,"g_*.xbx")) {
-                    byte[] bytes=File.ReadAllBytes(Path.Combine(game,"global",Path.GetFileName(package)));
+                    // Ultimate Way Big (form 25) lives with its level: its package is installed in l_tokd, not in global.
+                    string packagePath=Path.Combine(game,form.Id==25?"l_tokd":"global",Path.GetFileName(package));
+                    if(!File.Exists(packagePath))continue;
+                    byte[] bytes=File.ReadAllBytes(packagePath);
                     levelArchives.Add(bytes);
                     foreach(var part in Parse(bytes))if(part.Key==13)foreach(var clip in Parse(part.Data))importedClips.Add(clip.Key);
                 }

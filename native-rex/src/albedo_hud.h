@@ -1,4 +1,5 @@
 #pragma once
+#include "ultimate_way_big.h"
 
 #include <atomic>
 #include <cstdint>
@@ -67,6 +68,12 @@ constexpr uint32_t SwapRedGreen(uint32_t fetch) {
 }
 
 inline uint32_t FetchWord(uint32_t fetch) {
+  if (texture_key == 0xc6b6cca5 &&
+      ultimate_way_big::active.load(std::memory_order_relaxed)) {
+    const uint32_t green = (fetch >> 4) & 7;
+    // Sample the green shaft channel for green and blue, with no red.
+    return (fetch & ~(0x1ffu << 1)) | (4u << 1) | (green << 4) | (green << 7);
+  }
   return IsHudTexture(texture_key) && enabled.load(std::memory_order_relaxed)
       ? SwapRedGreen(fetch) : fetch;
 }

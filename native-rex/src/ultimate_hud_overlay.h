@@ -15,7 +15,7 @@ namespace ben10::ultimate_hud {
 class Prongs final : public rex::ui::ImGuiDialog {
  public:
   explicit Prongs(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
-  bool NeedsContinuousRepaint() override { return active.load(std::memory_order_relaxed); }
+  bool NeedsContinuousRepaint() override { return Active(); }
 
  private:
   // The dial in 1280x720 game space: centre and outer radii.
@@ -25,7 +25,7 @@ class Prongs final : public rex::ui::ImGuiDialog {
   static constexpr float kLength = 31.0f, kWidth = 18.0f;
 
   void OnDraw(ImGuiIO& io) override {
-    if (!active.load(std::memory_order_relaxed)) return;
+    if (!Active()) return;
     if (Ben10SubmittedFrames() > dial_frame.load(std::memory_order_relaxed) + 2) return;
     const float scale = std::min(io.DisplaySize.x / 1280.0f, io.DisplaySize.y / 720.0f);
     if (scale <= 0) return;

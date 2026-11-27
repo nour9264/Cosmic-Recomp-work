@@ -18,11 +18,17 @@ FORMS = 'cosmic_hero_forms'
 OWNS_GATE = 'cosmic_hero_owns_mission_gate'
 COOLDOWN = 'cosmic_hero_recharge_duration'
 LAST_ENERGY = 'cosmic_hero_last_energy'
+LOAD_LIMIT = 'cosmic_hero_load_limit'
 
 
-def authored(ultimate_voices=False, discord_presence=False):
+def authored(ultimate_voices=False, discord_presence=False, ultimate_cannonbolt=False, matrix_upgrades=False):
+    pairs = {**ULTIMATE_PAIRS, **({23: 24} if ultimate_cannonbolt else {})}
     c = Code()
     c.nil(0); c.put(0, TARGET)
+    if matrix_upgrades:
+        c.call('CosmicGetBenMatrixTier', result=1)
+        c.num(2, 4); c.binary(0x12, 3, 1, 2); c.false(3, 'matrix_ready')
+        c.jump('end'); c.label('matrix_ready')
     c.native('cosmic_hero_enabled', 0)
     c.num(1, 1); c.binary(0x10, 2, 0, 1); c.false(2, 'end')
     c.get(0, READY); c.false(0, 'end')
@@ -33,9 +39,11 @@ def authored(ultimate_voices=False, discord_presence=False):
         c.get(0, flag); c.false(0, 'clear_' + str(flag)); c.jump('end')
         c.label('clear_' + str(flag))
     c.get(0, 'gCurrentCharacter')
-    for normal, ultimate in ULTIMATE_PAIRS.items():
+    for normal, ultimate in pairs.items():
         c.num(1, normal); c.binary(0x10, 2, 0, 1)
         c.false(2, 'next_' + str(normal))
+        if normal == 23:
+            c.get(4, 'gFormData'); c.num(5, ultimate); c.index(6, 4, 5); c.false(6, 'end')
         c.num(3, ultimate); c.put(3, TARGET); c.jump('end')
         c.label('next_' + str(normal))
     c.label('end'); c.done()
@@ -44,6 +52,10 @@ def authored(ultimate_voices=False, discord_presence=False):
     # Called only from gameplay after original pause/loading/cutscene guards.
     # Native delta is guest simulation time, never host wall-clock time.
     c = Code()
+    if matrix_upgrades:
+        c.get(0, PHASE); c.num(1, 5); c.binary(0x10, 2, 0, 1)
+        c.false(2, 'ordinary_advance'); c.call('CosmicUltimateTapAdvance'); c.done()
+        c.label('ordinary_advance')
     c.get(0, PHASE); c.num(1, 1); c.binary(0x10, 2, 0, 1)
     c.false(2, 'returning')
     c.get(3, 'gCurrentCharacter'); c.get(4, TARGET)
@@ -54,6 +66,11 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.num(0, 2); c.put(0, PHASE)
     c.num(0, ACTIVE_SECONDS); c.put(0, REMAINING)
     c.native('cosmic_hero_active')
+    if ultimate_cannonbolt:
+        c.get(3, TARGET); c.num(4, 24); c.binary(0x10, 2, 3, 4)
+        c.false(2, 'other_voice')
+        c.native('cosmic_ultimate_cannonbolt_voice'); c.jump('end')
+        c.label('other_voice')
     if ultimate_voices:c.call('CosmicHeroCallout')
     c.jump('end')
 
@@ -99,9 +116,11 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.call('CosmicHeroResolveTarget')
     c.get(0, TARGET); c.false(0, 'end')
     c.get(1, 'gCurrentCharacter'); c.put(1, 0xf495406a)
-    c.num(1, 1); c.put(1, PHASE)
     if ultimate_voices:
         c.boolean(2,False);c.put(2,'cosmic_hero_voice_observed')
+    if matrix_upgrades:
+        c.call('CosmicUltimateTapBegin', result=3); c.false(3,'immediate'); c.jump('end'); c.label('immediate')
+    c.num(1, 1); c.put(1, PHASE)
     c.call('switch_to_ultimate')
     c.call('CosmicHeroFlash')
     c.label('end'); c.done()
@@ -136,7 +155,13 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.binary(0x0c, 3, 3, 4)
     c.num(5, RECHARGE_SECONDS); c.binary(0x13, 2, 3, 5)
     c.false(2, 'duration'); c.num(3, RECHARGE_SECONDS)
-    c.label('duration'); c.put(3, COOLDOWN)
+    c.label('duration')
+    if matrix_upgrades:
+        c.call('CosmicGetBenMatrixTier', result=6)
+        c.num(7, 6); c.binary(0x10, 8, 6, 7); c.false(8, 'base_cooldown')
+        c.num(7, .8); c.binary(0x0c, 3, 3, 7)
+        c.label('base_cooldown')
+    c.put(3, COOLDOWN)
     # Own the pending transition before invoking the original asynchronous path.
     c.num(1, 3); c.put(1, PHASE)
     c.native('cosmic_hero_return')
@@ -150,24 +175,35 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.native('cosmic_hero_enabled', 0); c.num(1, 1)
     c.binary(0x10, 2, 0, 1); c.false(2, 'end')
     c.get(0, LOAD_ACTIVE); c.false(0, 'start'); c.jump('end')
-    c.label('start'); c.get(0, 0x1729d192); c.false(0, 'no_gate')
+    c.label('start')
+    if ultimate_cannonbolt:
+        # The launcher registers the sixth form only when its local bundle exists.
+        c.get(7, 'gFormData'); c.num(8, 24); c.index(9, 7, 8)
+        c.false(9, 'stock_count'); c.num(12, 6); c.jump('count_ready')
+        c.label('stock_count'); c.num(12, 5)
+        c.label('count_ready')
+    else:
+        c.num(12, 5)
+    c.num(13, 2); c.binary(0x0c, 13, 12, 13)
+    c.num(14, 1); c.binary(0x0a, 14, 12, 14); c.put(14, LOAD_LIMIT)
+    c.get(0, 0x1729d192); c.false(0, 'no_gate')
     c.num(1, 0); c.binary(0x13, 2, 0, 1); c.false(2, 'no_gate')
-    c.num(1, 10); c.binary(0x0a, 0, 0, 1); c.put(0, 0x1729d192)
+    c.binary(0x0a, 0, 0, 13); c.put(0, 0x1729d192)
     c.boolean(1, True); c.put(1, OWNS_GATE); c.jump('setup')
     c.label('no_gate'); c.boolean(1, False); c.put(1, OWNS_GATE)
-    c.label('setup'); c.num(1, 10); c.put(1, LOAD_PENDING)
+    c.label('setup'); c.put(13, LOAD_PENDING)
     c.boolean(1, True); c.put(1, LOAD_ACTIVE)
     c.boolean(1, False); c.put(1, READY)
     c.num(1, 0); c.put(1, PHASE)
     c.table(0); c.put(0, FORMS)
-    for index, ultimate in enumerate(ULTIMATE_PAIRS.values(), 1):
+    for index, ultimate in enumerate(pairs.values(), 1):
         c.num(1, index); c.num(2, ultimate); c.store(0, 1, 2)
     c.num(1, 1); c.put(1, LOAD_NEXT); c.call('CosmicHeroLoadNext')
     c.label('end'); c.done()
     result.append((crc('CosmicHeroLoad'), 0, c.finish()))
 
     c = Code()
-    c.get(0, LOAD_NEXT); c.num(1, 6)
+    c.get(0, LOAD_NEXT); c.get(1, LOAD_LIMIT)
     c.binary(0x12, 2, 0, 1); c.false(2, 'end')
     c.num(1, 1); c.binary(0x0a, 1, 0, 1); c.put(1, LOAD_NEXT)
     c.num(1, 2); c.put(1, PAIR_PENDING)
@@ -201,12 +237,16 @@ def authored(ultimate_voices=False, discord_presence=False):
     result.append((crc('CosmicHeroLoaded'), 1, c.finish()))
 
     c = Code()
+    if matrix_upgrades:
+        c.call('CosmicBenCaptureStockVitals')
     # Consume the edge even while dead; a held click must not activate after
     # respawn. Keep the original death/respawn transition entirely game-owned.
     c.native('cosmic_hero_button', 0)
     c.get(1, 'player'); c.false(1, 'end')
     c.method(1, 'person', [1], 2); c.false(2, 'end')
     c.method(2, 'isdead', [2], 3); c.false(3, 'alive')
+    if matrix_upgrades:c.call('CosmicUltimateTapCancel')
+    if discord_presence: c.native('cosmic_ultimate_way_big_reset')
     c.num(1, 0); c.put(1, PHASE); c.put(1, REMAINING)
     c.nil(1); c.put(1, TARGET); c.jump('end')
     c.label('alive')
@@ -222,11 +262,33 @@ def authored(ultimate_voices=False, discord_presence=False):
     c.label('end'); c.done()
     result.append((crc('CosmicHeroUpdate'), 0, c.finish()))
 
+    if discord_presence:
+        # The game queues this through DScriptMgr::DelayedCall on an L3 edge.
+        c = Code()
+        c.get(1, 'CosmicUltimateWayBigTick'); c.false(1, 'model_swap')
+        c.call('CosmicUltimateWayBigTick'); c.jump('end')
+        c.label('model_swap')
+        c.get(1, 'player'); c.false(1, 'end')
+        c.method(1, 'person', [1], 2); c.false(2, 'end')
+        c.method(2, 'isdead', [2], 3); c.false(3, 'way_big_alive')
+        c.native('cosmic_ultimate_way_big_reset'); c.jump('end')
+        c.label('way_big_alive')
+        c.get(5, 'overlay'); c.method(5, 'cosmic_ultimate_way_big_request', [5, 2], 4)
+        c.num(1, 1); c.binary(0x10, 2, 4, 1)
+        c.false(2, 'end'); c.call('CosmicHeroFlash')
+        c.label('end'); c.done()
+        result.append((crc('CosmicWayBigUpdate'), 0, c.finish()))
+
     c = Code()
     c.get(0, PHASE); c.num(1, 2); c.binary(0x10, 2, 0, 1)
     c.false(2, 'cooldown'); c.num(3, 1.0 / ACTIVE_SECONDS); c.jump('meter')
     c.label('cooldown'); c.num(1, 4); c.binary(0x10, 2, 0, 1)
     c.false(2, 'end'); c.num(3, -1.0 / RECHARGE_SECONDS)
+    if matrix_upgrades:
+        c.call('CosmicGetBenMatrixTier', result=6)
+        c.num(7, 6); c.binary(0x10, 8, 6, 7); c.false(8, 'base_meter')
+        c.num(3, -1.0 / (RECHARGE_SECONDS * .8))
+        c.label('base_meter')
     c.label('meter'); c.get(4, REMAINING); c.binary(0x0c, 4, 4, 3)
     c.num(1, 4); c.binary(0x10, 2, 0, 1); c.false(2, 'person')
     c.num(1, 1); c.binary(0x0a, 4, 4, 1)
@@ -267,10 +329,11 @@ def authored(ultimate_voices=False, discord_presence=False):
     # Only called during original form-system teardown. Keep owned resources
     # resident when the option is merely toggled off during a mission.
     c = Code()
+    if matrix_upgrades:c.call('CosmicUltimateTapCancel')
     c.get(0, LOAD_ACTIVE); c.false(0, 'clear')
     c.get(1, 0xf3d407b1); c.method(1, 'getcurrentmission', [1], 2)
     c.get(3, FORMS); c.get(4, 'gFormData'); c.get(5, LOAD_NEXT)
-    for index in range(1, 6):
+    for index in range(1, len(pairs)+1):
         c.num(6, index); c.binary(0x12, 7, 6, 5)
         c.false(7, 'clear')
         c.index(7, 3, 6); c.index(8, 4, 7)
@@ -282,7 +345,7 @@ def authored(ultimate_voices=False, discord_presence=False):
         c.method(2, 'unloaddesc', [2, 9, 10])
     c.label('clear')
     for name in (LOAD_ACTIVE, LOAD_NEXT, LOAD_PENDING, PAIR_PENDING, FORMS, OWNS_GATE,
-                 READY, TARGET, REMAINING, COOLDOWN):
+                 READY, TARGET, REMAINING, COOLDOWN, LOAD_LIMIT):
         c.nil(0); c.put(0, name)
     c.num(0, 0); c.put(0, PHASE)
     c.done()
@@ -290,7 +353,7 @@ def authored(ultimate_voices=False, discord_presence=False):
 
     c = Code()
     c.get(0, 'gCurrentCharacter')
-    for ultimate in sorted(ULTIMATE_PAIRS.values()):
+    for ultimate in sorted(pairs.values()):
         c.num(1, ultimate); c.binary(0x10, 2, 0, 1)
         c.false(2, 'next_' + str(ultimate)); c.jump('ultimate')
         c.label('next_' + str(ultimate))
@@ -305,9 +368,13 @@ def authored(ultimate_voices=False, discord_presence=False):
     if ultimate_voices:
         from ultimate_voice_program import hero_functions
         result.extend(hero_functions())
+    if matrix_upgrades:
+        from ultimate_chest_tap_program import authored as tap_authored
+        result.extend(tap_authored())
     if discord_presence:
         for level in ['menus','l_chin','l_mili','l_pari','l_romd','l_romn','l_rush','l_tokd','l_tokn']:
-            c=Code();c.native('cosmic_presence_'+level);c.done()
+            c=Code();c.native('cosmic_presence_'+level)
+            c.done()
             result.append((crc('CosmicPresence_'+level),0,c.finish()))
     return result
 
@@ -340,3 +407,5 @@ if __name__ == '__main__':
     destination.mkdir(parents=True, exist_ok=True)
     (destination / 'HeroTimeProgram.bin').write_bytes(encode(authored()))
     print('Private authored target resolver generated; not installed or gameplay validated.')
+
+

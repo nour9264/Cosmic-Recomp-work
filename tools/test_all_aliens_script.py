@@ -43,6 +43,7 @@ class VM:
             if kind==1:r[a]=None
             elif kind==2:r[a]=bool(b)
             elif kind==3:r[a]=struct.unpack('>f',struct.pack('>I',words[pc+1]))[0]
+            elif kind==4:r[a]=code[(pc+1)*4:(pc+advance)*4].split(b'\x00',1)[0].decode('ascii')
             elif kind==5:r[a]=words[pc+1]
             elif kind==6:r[b]=read(a)
             elif kind==7:r[a]=self.globals.get(words[pc+1])
@@ -96,6 +97,43 @@ for preset in ([4,5,7,10],[11,1,6,9],[1,2,3,4]):
 for preset in ([1,1,2,3],[None,1,2,3],[17,1,2,3]):
     vm=VM(preset);vm.page=0;vm.run('CosmicAlienUpdate')
     assert not vm.events and vm.slots()==preset;cases+=1
+# A change made with the R3 form screen stays: the saved four follow it, and paging back returns to the changed four.
+vm=VM([1,2,3,4]);vm.page=0;vm.run('CosmicAlienUpdate');vm.complete();vm.page=-1
+vm.globals[crc('gFormHotKey')][1][crc('formID')]=9
+vm.run('CosmicAlienUpdate');assert vm.slots()==[9,2,3,4],'R3 change must not be undone'
+loads=lambda:[e for e in vm.events if e[0]=='load']
+assert len(loads())==14 and vm.globals[crc(BASE)][1]==9,'the saved four take the change at once'
+# Paging right after the swap must neither undo it nor skip it.
+vm.page=1;vm.run('CosmicAlienUpdate');assert vm.slots()==[5,6,7,8],'extras must not repeat the current four'
+vm.page=0;vm.run('CosmicAlienUpdate');assert vm.slots()==[9,2,3,4],'paging right after a swap keeps it'
+assert len(loads())==14
+n=0
+while len(loads())==14 and n<400:
+    vm.page=-1;vm.run('CosmicAlienUpdate');n+=1
+assert 100<n<=200 and len(loads())==16,'a form that left the four is loaded again only after the change has settled'
+assert vm.globals[crc(READY)] is False,'pages wait for the reload'
+vm.page=1;vm.run('CosmicAlienUpdate');assert vm.slots()==[9,2,3,4],'pages wait while loading'
+vm.complete();assert vm.globals[crc(READY)] is True
+vm.run('CosmicAlienUpdate')
+assert vm.slots()==[5,6,7,8],'extras must not repeat the current four'
+vm.page=2;vm.run('CosmicAlienUpdate');assert vm.slots()==[10,11,1,None],'the swapped-out form is on the last page'
+vm.page=0;vm.run('CosmicAlienUpdate');assert vm.slots()==[9,2,3,4],'paging back keeps the changed four'
+unloads=lambda:[e for e in vm.events if e[0]=='unload']
+vm.run('CosmicAlienUnload');assert not [e for e in unloads() if e[2]=='g_9'],'forms in the four are unloaded by the game'
+assert [e for e in unloads() if e[2]=='g_1'],'the reloaded form is unloaded with the others'
+assert [e for e in unloads() if e[2]=='g_5'],'the other extras are unloaded'
+cases+=1
+# Several swaps in a row, one of them undone: only the forms that really are out of the four come back.
+vm=VM([1,2,3,4]);vm.page=0;vm.run('CosmicAlienUpdate');vm.complete();vm.page=-1
+hot=vm.globals[crc('gFormHotKey')]
+for slot,form in ((1,9),(2,10),(1,1)):
+    hot[slot][crc('formID')]=form;vm.run('CosmicAlienUpdate')
+n=0
+while len([e for e in vm.events if e[0]=='load'])==14 and n<400:
+    vm.run('CosmicAlienUpdate');n+=1
+reloaded=[e[2] for e in vm.events if e[0]=='load'][14:]
+assert vm.slots()==[1,10,3,4] and sorted(reloaded)==['atk_2','atk_9','g_2','g_9'],reloaded
+cases+=1
 
 import os
 from pathlib import Path
