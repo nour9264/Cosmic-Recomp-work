@@ -57,7 +57,7 @@ def main():
         shutil.copyfile(bridges / folder / 'CosmicBridge.exe', out / name)
     # Importer: embedded Python and its helpers from the support folder, scripts and pictures from this checkout.
     importer = out / 'four-arms-importer'
-    shutil.copytree(support / 'four-arms-importer', importer, ignore=shutil.ignore_patterns('*.py', '*.rgb', '__pycache__'))
+    shutil.copytree(support / 'four-arms-importer', importer, ignore=shutil.ignore_patterns('*.py', '*.rgb', '__pycache__', 'pictures'))
     for name in IMPORTER_SCRIPTS:
         source = ROOT / 'tools' / name
         if not source.is_file():
